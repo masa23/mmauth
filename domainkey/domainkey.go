@@ -9,13 +9,8 @@ import (
 
 type TXTLookupFunc func(name string) ([]string, error)
 
-// default resolver
-var resolver TXTLookupFunc = net.LookupTXT
-
-func SetResolver(f TXTLookupFunc) {
-	resolver = f
-}
-
+// DefaultResolver is the default TXT lookup function.
+var DefaultResolver TXTLookupFunc = net.LookupTXT
 var (
 	ErrNoRecordFound        = errors.New("no record found")
 	ErrDNSLookupFailed      = errors.New("dns lookup failed")
