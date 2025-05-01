@@ -7,6 +7,15 @@ import (
 	"strings"
 )
 
+type TXTLookupFunc func(name string) ([]string, error)
+
+// default resolver
+var resolver TXTLookupFunc = net.LookupTXT
+
+func SetResolver(f TXTLookupFunc) {
+	resolver = f
+}
+
 var (
 	ErrNoRecordFound        = errors.New("no record found")
 	ErrDNSLookupFailed      = errors.New("dns lookup failed")
@@ -104,8 +113,11 @@ func LookupARCDomainKey(selector, domain string) (DomainKey, error) {
 
 // lookupDomainKey
 func lookupDomainKey(selector, domain string) (DomainKey, error) {
+	if resolver == nil {
+		resolver = net.LookupTXT
+	}
 	query := fmt.Sprintf("%s._domainkey.%s", selector, domain)
-	res, err := net.LookupTXT(query)
+	res, err := resolver(query)
 	if dnsErr, ok := err.(*net.DNSError); ok {
 		if dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound
