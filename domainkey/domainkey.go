@@ -11,6 +11,7 @@ type TXTLookupFunc func(name string) ([]string, error)
 
 // DefaultResolver is the default TXT lookup function.
 var DefaultResolver TXTLookupFunc = net.LookupTXT
+
 var (
 	ErrNoRecordFound        = errors.New("no record found")
 	ErrDNSLookupFailed      = errors.New("dns lookup failed")
@@ -108,11 +109,8 @@ func LookupARCDomainKey(selector, domain string) (DomainKey, error) {
 
 // lookupDomainKey
 func lookupDomainKey(selector, domain string) (DomainKey, error) {
-	if resolver == nil {
-		resolver = net.LookupTXT
-	}
 	query := fmt.Sprintf("%s._domainkey.%s", selector, domain)
-	res, err := resolver(query)
+	res, err := DefaultResolver(query)
 	if dnsErr, ok := err.(*net.DNSError); ok {
 		if dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound

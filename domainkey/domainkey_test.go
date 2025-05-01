@@ -116,7 +116,7 @@ func TestLookupDomainKey(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			SetResolver(tc.resolver)
+			DefaultResolver = tc.resolver
 			actualResult, actualErr := lookupDomainKey(tc.selector, tc.domain)
 
 			if actualResult.Version != tc.expectedResult.Version {
