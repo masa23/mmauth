@@ -1,6 +1,7 @@
 package domainkey
 
 import (
+	"net"
 	"testing"
 )
 
@@ -85,13 +86,22 @@ func TestLookupDomainKey(t *testing.T) {
 		name           string
 		selector       string
 		domain         string
+		resolver       TXTLookupFunc
 		expectedResult DomainKey
 		expectedErr    error
 	}{
 		{
 			name:     "success",
 			selector: "default",
-			domain:   "masa23.jp",
+			domain:   "example.jp",
+			resolver: func(name string) ([]string, error) {
+				if name == "default._domainkey.example.jp" {
+					return []string{
+						"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+					}, nil
+				}
+				return nil, &net.DNSError{IsNotFound: true}
+			},
 			expectedResult: DomainKey{
 				Version:       "DKIM1",
 				HashAlgo:      []HashAlgo{HashAlgoSHA256},
@@ -106,6 +116,11 @@ func TestLookupDomainKey(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			originalResolver := DefaultResolver
+			t.Cleanup(func() {
+				DefaultResolver = originalResolver
+			})
+			DefaultResolver = tc.resolver
 			actualResult, actualErr := lookupDomainKey(tc.selector, tc.domain)
 
 			if actualResult.Version != tc.expectedResult.Version {
