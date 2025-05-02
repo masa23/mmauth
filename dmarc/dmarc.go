@@ -144,7 +144,11 @@ func ParseDMARCRecord(raw string) (*DMARCRecord, error) {
 				return &DMARCRecord{}, fmt.Errorf("invalid version: %s", d.Version)
 			}
 		case "rua":
-			d.AggregateReportURI = strings.Split(strings.TrimSpace(v), ",")
+			rawURIs := strings.Split(strings.TrimSpace(v), ",")
+			for i, uri := range rawURIs {
+				rawURIs[i] = strings.TrimSpace(uri)
+			}
+			d.AggregateReportURI = rawURIs
 		case "adkim":
 			d.AlignmentDKIM = AlignmentMode(strings.TrimSpace(v))
 			if d.AlignmentDKIM != AlignmentRelaxed && d.AlignmentDKIM != AlignmentStrict {
