@@ -165,7 +165,7 @@ func TestLookupDMARCRecord(t *testing.T) {
 		},
 		{
 			domain: "example.jp",
-			want:   &DMARCRecord{},
+			want:   nil,
 			resolver: func(name string) ([]string, error) {
 				return nil, &net.DNSError{IsNotFound: true}
 			},
@@ -264,7 +264,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.example.jp",
-			want:   &DMARCRecord{},
+			want:   nil,
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.example.jp" {
 					return []string{"v=DMARC1; p=reject;"}, nil
@@ -275,7 +275,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "example.jp",
-			want:   &DMARCRecord{},
+			want:   nil,
 			resolver: func(name string) ([]string, error) {
 				return nil, &net.DNSError{IsNotFound: true}
 			},
@@ -283,7 +283,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.example.jp",
-			want:   &DMARCRecord{},
+			want:   nil,
 			resolver: func(name string) ([]string, error) {
 				return nil, &net.DNSError{IsNotFound: true}
 			},

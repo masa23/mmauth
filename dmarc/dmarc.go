@@ -83,15 +83,15 @@ func LookupDMARCWithSubdomainFallback(domain string) (*DMARCRecord, error) {
 	for {
 		orgDomain, err := getParentDomain(domain)
 		if err != nil {
-			return &DMARCRecord{}, fmt.Errorf("failed to get organizational domain: %w", err)
+			return nil, fmt.Errorf("failed to get organizational domain: %w", err)
 		}
 		if orgDomain == domain {
-			return &DMARCRecord{}, ErrNoRecordFound
+			return nil, ErrNoRecordFound
 		}
 		d, err = LookupDMARCRecord(orgDomain)
 		if err == nil {
 			if d.SubdomainPolicy == "" {
-				return &DMARCRecord{}, ErrNoRecordFound
+				return nil, ErrNoRecordFound
 			}
 			d.isSubdomainPolicy = true
 			return d, nil
@@ -100,7 +100,7 @@ func LookupDMARCWithSubdomainFallback(domain string) (*DMARCRecord, error) {
 		if errors.Is(err, ErrNoRecordFound) {
 			continue
 		}
-		return &DMARCRecord{}, err
+		return nil, err
 	}
 }
 
@@ -109,21 +109,21 @@ func LookupDMARCRecord(domain string) (*DMARCRecord, error) {
 	res, err := DefaultResolver(query)
 	if dnsErr, ok := err.(*net.DNSError); ok {
 		if dnsErr.IsNotFound {
-			return &DMARCRecord{}, ErrNoRecordFound
+			return nil, ErrNoRecordFound
 		}
 	} else if err != nil {
-		return &DMARCRecord{}, fmt.Errorf("dns lookup failed: %w", err)
+		return nil, fmt.Errorf("dns lookup failed: %w", err)
 	}
 	for _, v := range res {
 		d, err := ParseDMARCRecord(v)
 		if err != nil {
-			return &DMARCRecord{}, err
+			return nil, err
 		}
 		if d.Policy != "" {
 			return d, nil
 		}
 	}
-	return &DMARCRecord{}, ErrNoRecordFound
+	return nil, ErrNoRecordFound
 }
 
 func ParseDMARCRecord(raw string) (*DMARCRecord, error) {
@@ -136,24 +136,27 @@ func ParseDMARCRecord(raw string) (*DMARCRecord, error) {
 		if pair == "" {
 			continue
 		}
-		k, v, _ := strings.Cut(pair, "=")
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid tag format: %s", pair)
+		}
 		switch strings.TrimSpace(k) {
 		case "v":
 			d.Version = strings.TrimSpace(v)
 			if d.Version != "DMARC1" {
-				return &DMARCRecord{}, fmt.Errorf("invalid version: %s", d.Version)
+				return nil, fmt.Errorf("invalid version: %s", d.Version)
 			}
 		case "rua":
 			d.AggregateReportURI = strings.Split(strings.TrimSpace(v), ",")
 		case "adkim":
 			d.AlignmentDKIM = AlignmentMode(strings.TrimSpace(v))
 			if d.AlignmentDKIM != AlignmentRelaxed && d.AlignmentDKIM != AlignmentStrict {
-				return &DMARCRecord{}, fmt.Errorf("invalid adkim value: %s", d.AlignmentDKIM)
+				return nil, fmt.Errorf("invalid adkim value: %s", d.AlignmentDKIM)
 			}
 		case "aspf":
 			d.AlignmentSPF = AlignmentMode(strings.TrimSpace(v))
 			if d.AlignmentSPF != AlignmentRelaxed && d.AlignmentSPF != AlignmentStrict {
-				return &DMARCRecord{}, fmt.Errorf("invalid aspf value: %s", d.AlignmentSPF)
+				return nil, fmt.Errorf("invalid aspf value: %s", d.AlignmentSPF)
 			}
 		case "ruf":
 			d.ForensicReportURI = strings.Split(strings.TrimSpace(v), ",")
@@ -164,42 +167,42 @@ func ParseDMARCRecord(raw string) (*DMARCRecord, error) {
 				case FailureAllFail, FailureAnyFail, FailureDKIMOnly, FailureSPFOnly:
 					d.FailureOptions = append(d.FailureOptions, FailureOption(f))
 				default:
-					return &DMARCRecord{}, fmt.Errorf("invalid fo value: %s", f)
+					return nil, fmt.Errorf("invalid fo value: %s", f)
 				}
 			}
 		case "pct":
 			pct, err := strconv.Atoi(strings.TrimSpace(v))
 			if err != nil {
-				return &DMARCRecord{}, fmt.Errorf("invalid pct value: %s", v)
+				return nil, fmt.Errorf("invalid pct value: %s", v)
 			}
 			if pct < 0 || pct > 100 {
-				return &DMARCRecord{}, fmt.Errorf("pct value out of range: %d", pct)
+				return nil, fmt.Errorf("pct value out of range: %d", pct)
 			}
 			d.Percent = pct
 		case "p":
 			d.Policy = PolicyType(strings.TrimSpace(v))
 			if d.Policy != PolicyNone && d.Policy != PolicyQuarantine && d.Policy != PolicyReject {
-				return &DMARCRecord{}, fmt.Errorf("invalid p value: %s", d.Policy)
+				return nil, fmt.Errorf("invalid p value: %s", d.Policy)
 			}
 		case "ri":
 			ri, err := strconv.Atoi(strings.TrimSpace(v))
 			if err != nil {
-				return &DMARCRecord{}, fmt.Errorf("invalid ri value: %s", v)
+				return nil, fmt.Errorf("invalid ri value: %s", v)
 			}
 			if ri < 0 {
-				return &DMARCRecord{}, fmt.Errorf("ri value out of range: %d", ri)
+				return nil, fmt.Errorf("ri value out of range: %d", ri)
 			}
 			d.ReportInterval = uint32(ri)
 		case "sp":
 			d.SubdomainPolicy = PolicyType(strings.TrimSpace(v))
 			if d.SubdomainPolicy != PolicyNone && d.SubdomainPolicy != PolicyQuarantine && d.SubdomainPolicy != PolicyReject {
-				return &DMARCRecord{}, fmt.Errorf("invalid sp value: %s", d.SubdomainPolicy)
+				return nil, fmt.Errorf("invalid sp value: %s", d.SubdomainPolicy)
 			}
 		}
 	}
 
 	if d.Version == "" {
-		return &DMARCRecord{}, fmt.Errorf("missing version tag in DMARC record")
+		return nil, fmt.Errorf("missing version tag in DMARC record")
 	}
 
 	return &d, nil
