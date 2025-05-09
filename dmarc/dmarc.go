@@ -163,7 +163,11 @@ func ParseRecord(raw string) (*Record, error) {
 				return nil, fmt.Errorf("invalid aspf value: %s", d.AlignmentSPF)
 			}
 		case "ruf":
-			d.ForensicReportURI = strings.Split(strings.TrimSpace(v), ",")
+			rawURIs := strings.Split(strings.TrimSpace(v), ",")
+			for i, uri := range rawURIs {
+				rawURIs[i] = strings.TrimSpace(uri)
+			}
+			d.ForensicReportURI = rawURIs
 		case "fo":
 			fo := strings.Split(strings.TrimSpace(v), ":")
 			for _, f := range fo {
