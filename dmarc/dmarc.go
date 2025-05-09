@@ -44,7 +44,7 @@ const (
 	PolicyReject     PolicyType = "reject"
 )
 
-type DMARCRecord struct {
+type Record struct {
 	AggregateReportURI []string        // rua Aggregate report URIs
 	AlignmentDKIM      AlignmentMode   // adkim DKIM alignment mode (r or s)
 	AlignmentSPF       AlignmentMode   // aspf SPF alignment mode (r or s)
@@ -75,8 +75,8 @@ func getParentDomain(domain string) (string, error) {
 	return parentDomain, nil
 }
 
-func LookupDMARCWithSubdomainFallback(domain string) (*DMARCRecord, error) {
-	d, err := LookupDMARCRecord(domain)
+func LookupRecordWithSubdomainFallback(domain string) (*Record, error) {
+	d, err := LookupRecord(domain)
 	if err == nil {
 		return d, nil
 	}
@@ -88,7 +88,7 @@ func LookupDMARCWithSubdomainFallback(domain string) (*DMARCRecord, error) {
 		if orgDomain == domain {
 			return nil, ErrNoRecordFound
 		}
-		d, err = LookupDMARCRecord(orgDomain)
+		d, err = LookupRecord(orgDomain)
 		if err == nil {
 			if d.SubdomainPolicy == "" {
 				return nil, ErrNoRecordFound
@@ -104,7 +104,7 @@ func LookupDMARCWithSubdomainFallback(domain string) (*DMARCRecord, error) {
 	}
 }
 
-func LookupDMARCRecord(domain string) (*DMARCRecord, error) {
+func LookupRecord(domain string) (*Record, error) {
 	query := fmt.Sprintf("_dmarc.%s", domain)
 	res, err := DefaultResolver(query)
 	if dnsErr, ok := err.(*net.DNSError); ok {
@@ -115,7 +115,7 @@ func LookupDMARCRecord(domain string) (*DMARCRecord, error) {
 		return nil, fmt.Errorf("dns lookup failed: %w", err)
 	}
 	for _, v := range res {
-		d, err := ParseDMARCRecord(v)
+		d, err := ParseRecord(v)
 		if err != nil {
 			return nil, err
 		}
@@ -126,8 +126,8 @@ func LookupDMARCRecord(domain string) (*DMARCRecord, error) {
 	return nil, ErrNoRecordFound
 }
 
-func ParseDMARCRecord(raw string) (*DMARCRecord, error) {
-	var d DMARCRecord
+func ParseRecord(raw string) (*Record, error) {
+	var d Record
 	d.raw = raw
 
 	pairs := strings.Split(raw, ";")

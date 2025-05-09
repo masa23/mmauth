@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func assertDMARCEqual(t *testing.T, got, expected *DMARCRecord) {
+func assertRecordEqual(t *testing.T, got, expected *Record) {
 	t.Helper()
 	if !reflect.DeepEqual(got, expected) {
 		t.Errorf("DMARC mismatch:\nExpected: %+v\nGot:      %+v", expected, got)
@@ -85,14 +85,14 @@ func Test_getParentDomain(t *testing.T) {
 	}
 }
 
-func TestParseDMARCRecord(t *testing.T) {
+func TestParseRecord(t *testing.T) {
 	testCases := []struct {
 		raw      string
-		expected *DMARCRecord
+		expected *Record
 	}{
 		{
 			raw: "v=DMARC1; p=none; rua=mailto:agg@example.com; ruf=mailto:for@example.com; fo=1:d:s; adkim=s; aspf=r; pct=50; ri=3600; sp=quarantine;",
-			expected: &DMARCRecord{
+			expected: &Record{
 				Version:            "DMARC1",
 				Policy:             PolicyNone,
 				SubdomainPolicy:    PolicyQuarantine,
@@ -108,7 +108,7 @@ func TestParseDMARCRecord(t *testing.T) {
 		},
 		{
 			raw: "v=DMARC1; p=reject; adkim=r; aspf=s;",
-			expected: &DMARCRecord{
+			expected: &Record{
 				Version:       "DMARC1",
 				Policy:        PolicyReject,
 				AlignmentDKIM: AlignmentRelaxed,
@@ -118,7 +118,7 @@ func TestParseDMARCRecord(t *testing.T) {
 		},
 		{
 			raw: "v=DMARC1; p=quarantine; pct=100; ri=86400;",
-			expected: &DMARCRecord{
+			expected: &Record{
 				Version:        "DMARC1",
 				Policy:         PolicyQuarantine,
 				Percent:        100,
@@ -130,25 +130,25 @@ func TestParseDMARCRecord(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("Parse: %s", tc.raw), func(t *testing.T) {
-			got, err := ParseDMARCRecord(tc.raw)
+			got, err := ParseRecord(tc.raw)
 			if err != nil {
 				t.Fatalf("Unexpected error: %v", err)
 			}
-			assertDMARCEqual(t, got, tc.expected)
+			assertRecordEqual(t, got, tc.expected)
 		})
 	}
 }
 
-func TestLookupDMARCRecord(t *testing.T) {
+func TestLookupRecord(t *testing.T) {
 	testCases := []struct {
 		domain   string
-		want     *DMARCRecord
+		want     *Record
 		wantErr  error
 		resolver TXTLookupFunc
 	}{
 		{
 			domain: "example.jp",
-			want: &DMARCRecord{
+			want: &Record{
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []string{"mailto:abuse@example.jp"},
@@ -180,23 +180,23 @@ func TestLookupDMARCRecord(t *testing.T) {
 				DefaultResolver = originalResolver
 			})
 			DefaultResolver = tc.resolver
-			got, err := LookupDMARCRecord(tc.domain)
+			got, err := LookupRecord(tc.domain)
 			assertErrorEqual(t, err, tc.wantErr)
-			assertDMARCEqual(t, got, tc.want)
+			assertRecordEqual(t, got, tc.want)
 		})
 	}
 }
 
-func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
+func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 	testCases := []struct {
 		domain   string
-		want     *DMARCRecord
+		want     *Record
 		wantErr  error
 		resolver TXTLookupFunc
 	}{
 		{
 			domain: "example.jp",
-			want: &DMARCRecord{
+			want: &Record{
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []string{"mailto:abuse@example.jp"},
@@ -213,7 +213,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.example.jp",
-			want: &DMARCRecord{
+			want: &Record{
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
@@ -230,7 +230,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.sub.example.jp",
-			want: &DMARCRecord{
+			want: &Record{
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
@@ -247,7 +247,7 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.sub.example.jp",
-			want: &DMARCRecord{
+			want: &Record{
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
@@ -292,15 +292,15 @@ func TestLookupDMARCRecordWithSubdomainFallback(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("LookupWithFallback: %s", tc.domain), func(t *testing.T) {
+		t.Run(fmt.Sprintf("LookupRecordWithSubdomainFallback: %s", tc.domain), func(t *testing.T) {
 			originalResolver := DefaultResolver
 			t.Cleanup(func() {
 				DefaultResolver = originalResolver
 			})
 			DefaultResolver = tc.resolver
-			got, err := LookupDMARCWithSubdomainFallback(tc.domain)
+			got, err := LookupRecordWithSubdomainFallback(tc.domain)
 			assertErrorEqual(t, err, tc.wantErr)
-			assertDMARCEqual(t, got, tc.want)
+			assertRecordEqual(t, got, tc.want)
 		})
 	}
 }
