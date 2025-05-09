@@ -212,6 +212,23 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 			wantErr: nil,
 		},
 		{
+			domain: "example.jp",
+			want: &Record{
+				Version:            "DMARC1",
+				Policy:             "reject",
+				AggregateReportURI: []string{"mailto:rua1@example.jp", "mailto:rua2@example.jp"},
+				ForensicReportURI:  []string{"mailto:ruf1@example.jp", "mailto:rfu2@example.jp"},
+				raw:                "v=DMARC1; p=reject; rua=mailto:rua1@example.jp, mailto:rua2@example.jp; ruf=mailto:ruf1@example.jp, mailto:rfu2@example.jp;",
+			},
+			resolver: func(name string) ([]string, error) {
+				if name == "_dmarc.example.jp" {
+					return []string{"v=DMARC1; p=reject; rua=mailto:rua1@example.jp, mailto:rua2@example.jp; ruf=mailto:ruf1@example.jp, mailto:rfu2@example.jp;"}, nil
+				}
+				return nil, &net.DNSError{IsNotFound: true}
+			},
+			wantErr: nil,
+		},
+		{
 			domain: "sub.example.jp",
 			want: &Record{
 				Version:           "DMARC1",
