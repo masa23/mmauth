@@ -42,7 +42,7 @@ func ParseHeaderParams(s string) (map[string]string, error) {
 			return params, errors.New("malformed header params")
 		}
 
-		params[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		params[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
 	}
 	return params, nil
 }

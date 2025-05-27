@@ -86,11 +86,11 @@ type Signature struct {
 	SignatureExpiration int64              // x signature expiration
 	VerifyResult        *VerifyResult
 	raw                 string
-	canonnAndAlog       *CanonicalizationAndAlgorithm
+	canonnAndAlgo       *CanonicalizationAndAlgorithm
 }
 
 func (ds *Signature) GetCanonicalizationAndAlgorithm() *CanonicalizationAndAlgorithm {
-	return ds.canonnAndAlog
+	return ds.canonnAndAlgo
 }
 
 func (ds *Signature) String() string {
@@ -206,7 +206,7 @@ func ParseSignature(s string) (*Signature, error) {
 	if err != nil {
 		return nil, err
 	}
-	result.canonnAndAlog = &CanonicalizationAndAlgorithm{
+	result.canonnAndAlgo = &CanonicalizationAndAlgorithm{
 		Header:    Canonicalization(canHeader),
 		Body:      Canonicalization(canBody),
 		Algorithm: result.Algorithm,
@@ -379,7 +379,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 	// ヘッダの正規化
 	var s string
 	for _, header := range h {
-		s += canonical.Header(header, canonical.Canonicalization(d.canonnAndAlog.Header))
+		s += canonical.Header(header, canonical.Canonicalization(d.canonnAndAlgo.Header))
 	}
 	// 末尾のCRLFを削除
 	s = strings.TrimSuffix(s, "\r\n")
@@ -396,7 +396,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 	}
 
 	// 署名するヘッダをハッシュ化
-	hash := d.canonnAndAlog.HashAlgo.New()
+	hash := d.canonnAndAlgo.HashAlgo.New()
 	hash.Write([]byte(s))
 
 	// 署名を検証
@@ -426,7 +426,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 	switch pub := pub.(type) {
 	case *rsa.PublicKey:
 		// 署名を検証
-		if err := rsa.VerifyPKCS1v15(pub, d.canonnAndAlog.HashAlgo, hash.Sum(nil), signature); err != nil {
+		if err := rsa.VerifyPKCS1v15(pub, d.canonnAndAlgo.HashAlgo, hash.Sum(nil), signature); err != nil {
 			d.VerifyResult = &VerifyResult{
 				status:    VerifyStatusFail,
 				err:       fmt.Errorf("failed to verify signature: %v", err),

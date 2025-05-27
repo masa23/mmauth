@@ -58,7 +58,7 @@ func ParseARCAuthenticationResults(s string) (*ARCAuthenticationResults, error) 
 			continue
 		}
 
-		key := strings.TrimSpace(keyValue[0])
+		key := strings.ToLower(strings.TrimSpace(keyValue[0]))
 		value := strings.TrimSpace(keyValue[1])
 
 		switch key {
