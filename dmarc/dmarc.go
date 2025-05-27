@@ -140,7 +140,7 @@ func ParseRecord(raw string) (*Record, error) {
 		if !ok {
 			return nil, fmt.Errorf("invalid tag format: %s", pair)
 		}
-		switch strings.TrimSpace(k) {
+		switch strings.ToLower(strings.TrimSpace(k)) {
 		case "v":
 			d.Version = strings.TrimSpace(v)
 			if d.Version != "DMARC1" {

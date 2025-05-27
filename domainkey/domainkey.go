@@ -139,7 +139,7 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 	pairs := strings.Split(r, ";")
 	for _, pair := range pairs {
 		k, v, _ := strings.Cut(pair, "=")
-		switch strings.TrimSpace(k) {
+		switch strings.ToLower(strings.TrimSpace(k)) {
 		case "v":
 			key.Version = v
 			continue

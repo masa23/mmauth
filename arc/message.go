@@ -28,7 +28,7 @@ type ARCMessageSignature struct {
 	Selector         string             // s selector
 	Timestamp        int64              // t timestamp
 	raw              string
-	canonnAndAlog    *CanonicalizationAndAlgorithm
+	canonnAndAlgo    *CanonicalizationAndAlgorithm
 }
 
 func (ams *ARCMessageSignature) Raw() string {
@@ -39,7 +39,7 @@ func (ams *ARCMessageSignature) Raw() string {
 }
 
 func (ams *ARCMessageSignature) GetCanonicalizationAndAlgorithm() *CanonicalizationAndAlgorithm {
-	return ams.canonnAndAlog
+	return ams.canonnAndAlgo
 }
 
 // ARC-Message-Signature の文字列化
@@ -75,7 +75,7 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 			continue
 		}
 
-		key := strings.TrimSpace(keyValue[0])
+		key := strings.ToLower(strings.TrimSpace(keyValue[0]))
 		value := header.StripWhiteSpace(keyValue[1])
 
 		switch key {
@@ -124,7 +124,7 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 	if err != nil {
 		return nil, err
 	}
-	result.canonnAndAlog = &CanonicalizationAndAlgorithm{
+	result.canonnAndAlgo = &CanonicalizationAndAlgorithm{
 		Header:    Canonicalization(canHeader),
 		Body:      Canonicalization(canBody),
 		Algorithm: result.Algorithm,
@@ -233,7 +233,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 				domainKey: domainKey,
 			}
 		}
-		s += canonical.Header(header, canonical.Canonicalization(ams.canonnAndAlog.Header))
+		s += canonical.Header(header, canonical.Canonicalization(ams.canonnAndAlgo.Header))
 	}
 	s = strings.TrimSuffix(s, "\r\n")
 
@@ -249,7 +249,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	}
 
 	// 署名するヘッダをハッシュ化
-	hash := ams.canonnAndAlog.HashAlgo.New()
+	hash := ams.canonnAndAlgo.HashAlgo.New()
 	hash.Write([]byte(s))
 
 	// 署名の検証
@@ -277,7 +277,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	switch pub := pub.(type) {
 	case *rsa.PublicKey:
 		// 署名の検証
-		if err := rsa.VerifyPKCS1v15(pub, ams.canonnAndAlog.HashAlgo, hash.Sum(nil), signature); err != nil {
+		if err := rsa.VerifyPKCS1v15(pub, ams.canonnAndAlgo.HashAlgo, hash.Sum(nil), signature); err != nil {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
 				err:       fmt.Errorf("failed to verify arc-message-signature signature: %v", err),

@@ -77,7 +77,7 @@ func TestParseDKIMSignature(t *testing.T) {
 				Selector:         "selector",
 				Timestamp:        1609459200,
 				raw:              "DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; t=1609459200; c=relaxed/relaxed; bh=base64hash; i=hoge@example.com; h=from:to:subject; b=base64signature",
-				canonnAndAlog: &CanonicalizationAndAlgorithm{
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
 					Header:    CanonicalizationRelaxed,
 					Body:      CanonicalizationRelaxed,
 					Algorithm: SignatureAlgorithmRSA_SHA256,
@@ -104,7 +104,7 @@ func TestParseDKIMSignature(t *testing.T) {
 				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
 					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
-				canonnAndAlog: &CanonicalizationAndAlgorithm{
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
 					Header:    CanonicalizationRelaxed,
 					Body:      CanonicalizationRelaxed,
 					Algorithm: SignatureAlgorithmRSA_SHA256,
@@ -132,7 +132,7 @@ func TestParseDKIMSignature(t *testing.T) {
 				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; l=100; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
 					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
-				canonnAndAlog: &CanonicalizationAndAlgorithm{
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
 					Header:    CanonicalizationRelaxed,
 					Body:      CanonicalizationRelaxed,
 					Algorithm: SignatureAlgorithmRSA_SHA256,
@@ -199,20 +199,20 @@ func TestParseDKIMSignature(t *testing.T) {
 			if actual.raw != tc.expected.raw {
 				t.Errorf("want %v, but got %v", tc.expected.raw, actual.raw)
 			}
-			if actual.canonnAndAlog.Header != tc.expected.canonnAndAlog.Header {
-				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlog.Header, actual.canonnAndAlog.Header)
+			if actual.canonnAndAlgo.Header != tc.expected.canonnAndAlgo.Header {
+				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlgo.Header, actual.canonnAndAlgo.Header)
 			}
-			if actual.canonnAndAlog.Body != tc.expected.canonnAndAlog.Body {
-				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlog.Body, actual.canonnAndAlog.Body)
+			if actual.canonnAndAlgo.Body != tc.expected.canonnAndAlgo.Body {
+				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlgo.Body, actual.canonnAndAlgo.Body)
 			}
-			if actual.canonnAndAlog.Algorithm != tc.expected.canonnAndAlog.Algorithm {
-				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlog.Algorithm, actual.canonnAndAlog.Algorithm)
+			if actual.canonnAndAlgo.Algorithm != tc.expected.canonnAndAlgo.Algorithm {
+				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlgo.Algorithm, actual.canonnAndAlgo.Algorithm)
 			}
-			if actual.canonnAndAlog.Limit != tc.expected.canonnAndAlog.Limit {
-				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlog.Limit, actual.canonnAndAlog.Limit)
+			if actual.canonnAndAlgo.Limit != tc.expected.canonnAndAlgo.Limit {
+				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlgo.Limit, actual.canonnAndAlgo.Limit)
 			}
-			if actual.canonnAndAlog.HashAlgo != tc.expected.canonnAndAlog.HashAlgo {
-				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlog.HashAlgo, actual.canonnAndAlog.HashAlgo)
+			if actual.canonnAndAlgo.HashAlgo != tc.expected.canonnAndAlgo.HashAlgo {
+				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlgo.HashAlgo, actual.canonnAndAlgo.HashAlgo)
 			}
 		})
 	}
@@ -316,7 +316,7 @@ func TestVerify(t *testing.T) {
 				raw: "DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
 					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
-				canonnAndAlog: &CanonicalizationAndAlgorithm{
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
 					Algorithm: SignatureAlgorithmRSA_SHA256,
 					Header:    CanonicalizationRelaxed,
 					Body:      CanonicalizationRelaxed,
