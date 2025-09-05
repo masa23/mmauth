@@ -78,6 +78,63 @@ func TestARCSealParse(t *testing.T) {
 	}
 }
 
+func TestARCSealVerifyFailChain(t *testing.T) {
+	// 5.1.2.  Marking and Sealing "cv=fail" (Invalid) Chains
+	// すでにcv=failがある場合、自身のインスタンス番号と同じヘッダーに対してのみ検証を行う
+
+	failSealHeader := "ARC-Seal: i=2; a=rsa-sha256; t=1706971004; cv=fail;\r\n" +
+		"        d=example.com; s=selector;\r\n" +
+		"        b=invalidsignatureforfailcase"
+
+	failHeaders := []string{
+		"ARC-Authentication-Results: i=1; example.com; dkim=pass; spf=pass\r\n",
+		"ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector;\r\n" +
+			"        h=Date:From:To:Subject:Message-Id;\r\n" +
+			"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1706971004;\r\n" +
+			"        b=ef198CMzjQC9DkeKZj8IrzvZuEPqV/MBDLYGPpdSiofRdBv6BkrFS8Gb7jH7/oXW\r\n" +
+			"         BEzZnRVMjpD7dHLpNjNjgqSQJI0GbSP/CK80BsVHRUioLWNPuG9aCNg/sOKl70yD\r\n" +
+			"         3PwmimfOhr1tA18cdDNQv1Q5iAxPLCfY2IKzY6FQqw0YBIFqACYC2Nf2ONXha89Y\r\n" +
+			"         UnZURPJSzXXrlZZserEqAt7MFaMzUVmBRHEDG9blwLkm/NhKKL9IT/pKc6T9ibbg\r\n" +
+			"         Dlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx\r\n" +
+			"         vrgEwmI6O74ZZR9jWIuyGg==\r\n",
+		"ARC-Seal: i=1; a=rsa-sha256; t=1706971004; cv=pass;\r\n" +
+			"        d=example.com; s=selector;\r\n" +
+			"        b=g+R0nyap1H1wsIqc3AvSesOyicLqq/p5bMP4yJUG/Kqmb8iN42MuYVdjD8xFNiPg\r\n" +
+			"         gfmq2Uz/FvYsyq9vx8R9Isxu0eNKyx4tZWMK0kNJkxW/cA+RRPZ1sSXxI2w+ZomV\r\n" +
+			"         5OHl0AzFFAUlU41Ngq6mJLKNXVYDrd4SILiYHCC+1B/sylS+7c4tbCTtQbikeVDZ\r\n" +
+			"         mTpq+W9lEDGxgtcmZK8UlAjDZ5CfMIef2ukeWWm8atqPRm0NfExmsWYhytVvccgN\r\n" +
+			"         IfYCgsji2Cee45epWJXJSD+RJLbhwbLgfMlFSUa4cdW0yNN24OB7rHV1T/tg+boG\r\n" +
+			"         y2vkgXJHRmKvadyjGwTW8A==\r\n",
+		"ARC-Authentication-Results: i=2; example.com; dkim=pass; spf=fail\r\n",
+		"ARC-Message-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector;\r\n" +
+			"        h=Date:From:To:Subject:Message-Id;\r\n" +
+			"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1706971004;\r\n" +
+			"        b=differentinvalidsignatureforfailcase\r\n",
+		failSealHeader,
+	}
+
+	// 失敗したsealを解析
+	failSeal, err := ParseARCSeal(failSealHeader)
+	if err != nil {
+		t.Fatalf("failed to parse fail seal: %s", err)
+	}
+
+	// cv=failのsealの場合、同じインスタンス(i=2)からのヘッダーのみに対して検証することを期待
+	// 無効な署名を使用しているため、これは失敗するはず
+	domainKey := domainkey.DomainKey{
+		HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+		KeyType:   "rsa",
+		PublicKey: testKeys.getPublicKeyBase64("rsa"),
+	}
+
+	result := failSeal.Verify(failHeaders, &domainKey)
+	// 無効な署名を使用しているため、これは失敗することを期待
+	// ただし、検証プロセス自体でパニックやエラーが発生してはならない
+	if result.Status() == VerifyStatusPass {
+		t.Error("expected fail seal verification to fail, but it passed")
+	}
+}
+
 func TestARCSealSign(t *testing.T) {
 	testCases := []struct {
 		name     string

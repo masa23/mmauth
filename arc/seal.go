@@ -172,9 +172,47 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 
 	// ヘッダの抽出と連結
-	h := header.ExtractHeadersARC(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
-	h = append(h, header.DeleteSignature(as.raw))
-	h = arcHeaderSort(h)
+	var h []string
+	// cv=failの場合、現在のインスタンスのみを含める
+	// RFCによると、失敗したチェーンを検証する際は、不正なチェーンを検出したMTAによって作成された
+	// ARCセットヘッダーフィールドのみを含める必要がある
+	if as.ChainValidation == ChainValidationResultFail {
+		// 現在のインスタンス番号を持つARCヘッダのみを抽出
+		var currentInstanceHeaders []string
+		for _, hdr := range headers {
+			k, _ := header.ParseHeaderField(hdr)
+			switch strings.ToLower(k) {
+			case "arc-authentication-results", "arc-message-signature", "arc-seal":
+				// 各ARCヘッダをパースしてインスタンス番号を確認
+				var instanceNumber int
+				switch strings.ToLower(k) {
+				case "arc-authentication-results":
+					if aar, err := ParseARCAuthenticationResults(hdr); err == nil {
+						instanceNumber = aar.InstanceNumber
+					}
+				case "arc-message-signature":
+					if ams, err := ParseARCMessageSignature(hdr); err == nil {
+						instanceNumber = ams.InstanceNumber
+					}
+				case "arc-seal":
+					if aas, err := ParseARCSeal(hdr); err == nil {
+						instanceNumber = aas.InstanceNumber
+					}
+				}
+				// 現在のインスタンス番号と一致する場合のみ追加
+				if instanceNumber == as.InstanceNumber {
+					currentInstanceHeaders = append(currentInstanceHeaders, hdr)
+				}
+			}
+		}
+		h = currentInstanceHeaders
+		h = append(h, header.DeleteSignature(as.raw))
+	} else {
+		// cv=passまたはcv=noneの場合、従来の方法で処理
+		h = header.ExtractHeadersARC(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
+		h = append(h, header.DeleteSignature(as.raw))
+		h = arcHeaderSort(h)
+	}
 
 	// ヘッダの正規化
 	var s string

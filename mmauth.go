@@ -291,10 +291,11 @@ func (m *MMAuth) Verify() {
 			}
 		}
 	}
-	// 一番最後のARCの署名を検証する
+	// ARCの署名を検証する
 	if m.AuthenticationHeaders.ARCSignatures != nil {
 		max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
 		if max > 0 {
+			// 最大インスタンス番号のAMSを検証する
 			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(max)
 			sign := arc.GetARCMessageSignature()
 			can := sign.GetCanonicalizationAndAlgorithm()
@@ -305,6 +306,15 @@ func (m *MMAuth) Verify() {
 					Limit:     0,
 				})
 				arc.Verify(m.Headers, bodyHash, nil)
+			}
+
+			// すべてのARCセットのASを最大インスタンス番号から順に検証する
+			// RFC 8617 セクション 5.2. Validator Actions に準拠
+			for i := max; i >= 1; i-- {
+				arcSet := m.AuthenticationHeaders.ARCSignatures.GetInstance(i)
+				if arcSet != nil {
+					arcSet.GetARCSeal().Verify(m.Headers, nil)
+				}
 			}
 		}
 	}

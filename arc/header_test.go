@@ -283,6 +283,51 @@ func TestParseARCHeaders(t *testing.T) {
 	}
 }
 
+func TestMultiInstanceARCVerification(t *testing.T) {
+	// 多段のARC署名の検証テスト
+	// RFC 8617に準拠した正しい多段ARC署名の検証ができることを確認
+	testHeaders := []string{
+		"ARC-Seal: i=1; a=rsa-sha256; t=1617220000; cv=none; d=example.com; s=selector; b=signature1",
+		"ARC-Seal: i=2; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature2",
+		"ARC-Seal: i=3; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature3",
+		"ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash1; b=signature1",
+		"ARC-Message-Signature: i=2; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash2; b=signature2",
+		"ARC-Message-Signature: i=3; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector; t=1617220000; h=from:to:subject; bh=bodyhash3; b=signature3",
+		"ARC-Authentication-Results: i=1; example.com; arc=pass; dkim=pass",
+		"ARC-Authentication-Results: i=2; example.com; arc=pass; spf=pass",
+		"ARC-Authentication-Results: i=3; example.com; arc=pass; dmarc=pass",
+	}
+
+	ahs, err := ParseARCHeaders(testHeaders)
+	if err != nil {
+		t.Fatalf("Failed to parse ARC headers: %v", err)
+	}
+
+	// 各ARCセットの検証結果を確認
+	// ここでは構造的な検証のみ行い、署名の検証は別途行う
+	if ahs.GetMaxInstance() != 3 {
+		t.Errorf("Expected max instance 3, got %d", ahs.GetMaxInstance())
+	}
+
+	// 各インスタンスが正しくパースされていることを確認
+	for i := 1; i <= 3; i++ {
+		arcSet := ahs.GetInstance(i)
+		if arcSet == nil {
+			t.Errorf("Expected ARC set for instance %d, got nil", i)
+			continue
+		}
+		if arcSet.GetARCSeal() == nil {
+			t.Errorf("Expected ARC-Seal for instance %d, got nil", i)
+		}
+		if arcSet.GetARCMessageSignature() == nil {
+			t.Errorf("Expected ARC-Message-Signature for instance %d, got nil", i)
+		}
+		if arcSet.GetARCAuthenticationResults() == nil {
+			t.Errorf("Expected ARC-Authentication-Results for instance %d, got nil", i)
+		}
+	}
+}
+
 func TestGetARCHeaders(t *testing.T) {
 	testCases := []struct {
 		name        string
