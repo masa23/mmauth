@@ -172,7 +172,7 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 
 	// ヘッダの抽出と連結
-	h := header.ExtractHeadersARC(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
+	h := header.ExtractHeadersAll(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
 	h = append(h, header.DeleteSignature(as.raw))
 	h = arcHeaderSort(h)
 
