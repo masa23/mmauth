@@ -214,6 +214,28 @@ func ExtractHeadersARC(headers []string, keys []string) []string {
 	return ret
 }
 
+func ExtractHeadersAll(headers []string, keys []string) []string {
+	var ret []string
+
+	// 重複を削除し、小文字に変換
+	keys = lowercaseAndRemoveDuplicates(keys)
+
+	// ヘッダを抽出
+	maps := extractHeaders(headers, keys)
+
+	// keys順に抽出する
+	for _, k := range keys {
+		for _, m := range maps {
+			if v, ok := m[k]; ok {
+				// 全てのヘッダを返す
+				ret = append(ret, v...)
+			}
+		}
+	}
+
+	return ret
+}
+
 // headersから指定したヘッダリストのヘッダを抽出する
 func extractHeaders(headers []string, keys []string) []map[string][]string {
 	var maps []map[string][]string
