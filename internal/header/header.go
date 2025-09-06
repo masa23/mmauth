@@ -214,6 +214,8 @@ func ExtractHeadersARC(headers []string, keys []string) []string {
 	return ret
 }
 
+// headersから指定したヘッダリストのヘッダを抽出する
+// ただし、重複してヘッダが存在する場合は、すべてを返す
 func ExtractHeadersAll(headers []string, keys []string) []string {
 	var ret []string
 
