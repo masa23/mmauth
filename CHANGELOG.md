@@ -1,5 +1,8 @@
 # Changelog
 
+## [v1.0.5](https://github.com/masa23/mmauth/compare/v1.0.4...v1.0.5) - 2025-11-18
+- DKIMのVerifyがすべてpassになる不具合を修正 by @masa23 in https://github.com/masa23/mmauth/pull/12
+
 ## [v1.0.4](https://github.com/masa23/mmauth/compare/v1.0.3...v1.0.4) - 2025-09-30
 - tagprを導入してみる by @masa23 in https://github.com/masa23/mmauth/pull/10
 
