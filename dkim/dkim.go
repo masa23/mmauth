@@ -323,8 +323,8 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				err:    fmt.Errorf("DKIM-Signature identity domain mismatch: Identify=%s fromDomain=%s", d.Identity, fromDomain),
 				msg:    "identity is mismatch" + testFlagMsg,
 			}
+			return
 		}
-		return
 	}
 
 	// DKIM-Signatureがない場合はneutral
