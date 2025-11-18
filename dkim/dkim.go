@@ -275,12 +275,14 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				err:    fmt.Errorf("domain key is not found: %v", err),
 				msg:    "domain key is not found",
 			}
+			return
 		} else if err != nil {
 			d.VerifyResult = &VerifyResult{
 				status: VerifyStatusTempErr,
 				err:    fmt.Errorf("failed to lookup domain key: %v", err),
 				msg:    "failed to lookup domain key",
 			}
+			return
 		}
 		domainKey = &domKey
 	}
@@ -299,6 +301,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "service type is invalid" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 
 	// i=がある場合はfromDomainと一致しているか確認
@@ -311,6 +314,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "failed to parse from domain" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 	if d.Identity != "" {
 		if !strings.HasSuffix(d.Identity, "@"+fromDomain) && !strings.HasSuffix(d.Identity, "."+fromDomain) {
@@ -319,6 +323,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				err:    fmt.Errorf("DKIM-Signature identity domain mismatch: Identify=%s fromDomain=%s", d.Identity, fromDomain),
 				msg:    "identity is mismatch" + testFlagMsg,
 			}
+			return
 		}
 	}
 
@@ -330,6 +335,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "sign is not found" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 	// バージョンを検証
 	if d.Version != 1 {
@@ -339,6 +345,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "version is invalid" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 	// exireを検証
 	// TimestampとSignatureExpirationがセットされてない場合は検証しない
@@ -352,6 +359,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				msg:       "signature is expired" + testFlagMsg,
 				domainKey: domainKey,
 			}
+			return
 		}
 		if d.Timestamp > d.SignatureExpiration {
 			d.VerifyResult = &VerifyResult{
@@ -360,6 +368,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				msg:       "timestamp is invalid" + testFlagMsg,
 				domainKey: domainKey,
 			}
+			return
 		}
 	}
 	// ボディーハッシュを検証
@@ -370,6 +379,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "body hash is not match" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 
 	// ヘッダの抽出と連結
@@ -393,6 +403,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "invalid signature" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 
 	// 署名するヘッダをハッシュ化
@@ -409,6 +420,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "invalid public key" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 
 	// 公開鍵をパース
@@ -420,6 +432,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "invalid public key" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 
 	// RSAかed25519の公開鍵か確認
@@ -433,6 +446,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				msg:       "invalid signature" + testFlagMsg,
 				domainKey: domainKey,
 			}
+			return
 		}
 	case ed25519.PublicKey:
 		// 署名を検証
@@ -443,6 +457,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 				msg:       "invalid signature" + testFlagMsg,
 				domainKey: domainKey,
 			}
+			return
 		}
 	default:
 		d.VerifyResult = &VerifyResult{
@@ -451,6 +466,7 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			msg:       "invalid public key" + testFlagMsg,
 			domainKey: domainKey,
 		}
+		return
 	}
 
 	d.VerifyResult = &VerifyResult{
