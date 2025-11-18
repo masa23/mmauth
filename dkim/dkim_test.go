@@ -298,6 +298,8 @@ func TestVerify(t *testing.T) {
 		input     *Signature
 		headers   []string
 		domainKey domainkey.DomainKey
+		status    VerifyStatus
+		expectErr bool
 	}{
 		{
 			name:     "valid",
@@ -335,6 +337,86 @@ func TestVerify(t *testing.T) {
 				KeyType:   "rsa",
 				PublicKey: publicKeyB64,
 			},
+			status:    VerifyStatusPass,
+			expectErr: false,
+		},
+		{
+			name:     "not valid body hash",
+			bodyHash: "invalidbodyhash",
+			input: &Signature{
+				Version:   1,
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Signature: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
+					"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:From:To:Subject:Message-Id",
+				Selector:         "selector",
+				Timestamp:        1706971004,
+				raw: "DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					HashAlgo:  crypto.SHA256,
+				},
+			},
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test\r\n",
+				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
+			},
+			domainKey: domainkey.DomainKey{
+				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+				KeyType:   "rsa",
+				PublicKey: publicKeyB64,
+			},
+			status:    VerifyStatusFail,
+			expectErr: true,
+		},
+		{
+			name:     "not valid headers",
+			bodyHash: "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+			input: &Signature{
+				Version:   1,
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Signature: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
+					"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:From:To:Subject:Message-Id",
+				Selector:         "selector",
+				Timestamp:        1706971004,
+				raw: "DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					HashAlgo:  crypto.SHA256,
+				},
+			},
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test [overwrite]\r\n",
+				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
+			},
+			domainKey: domainkey.DomainKey{
+				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+				KeyType:   "rsa",
+				PublicKey: publicKeyB64,
+			},
+			status:    VerifyStatusFail,
+			expectErr: true,
 		},
 	}
 
@@ -345,12 +427,13 @@ func TestVerify(t *testing.T) {
 				t.Errorf("verifyResult is nil")
 			}
 			if tc.input.VerifyResult.Error() != nil {
-				t.Errorf("unexpected error: %v", tc.input.VerifyResult.Error())
+				if !tc.expectErr {
+					t.Errorf("unexpected error: %v", tc.input.VerifyResult.Error())
+				}
 			}
-			if tc.input.VerifyResult.Status() != VerifyStatusPass {
-				t.Errorf("want %v, but got %v", VerifyStatusPass, tc.input.VerifyResult.Status())
+			if tc.input.VerifyResult.Status() != tc.status {
+				t.Errorf("want %v, but got %v", tc.status, tc.input.VerifyResult.Status())
 			}
-
 		})
 	}
 
