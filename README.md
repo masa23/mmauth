@@ -25,6 +25,11 @@ go get github.com/masa23/mmauth
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
+The SPF test data in the `spf/pyspf/test` directory includes files with separate licenses:
+- `rfc4408-tests.yml` is licensed under a BSD-style license. See [spf/pyspf/test/rfc4408-tests.LICENSE](spf/pyspf/test/rfc4408-tests.LICENSE) for details.
+- `rfc7208-tests.yml` is licensed under a BSD-style license. See [spf/pyspf/test/rfc7208-tests.LICENSE](spf/pyspf/test/rfc7208-tests.LICENSE) for details.
+- Other test files are licensed under the Python Software Foundation License Version 2. See [spf/pyspf/LICENSE](spf/pyspf/LICENSE) for details.
+
 ## Thanks!
 
 The following library was used as a reference during production.
