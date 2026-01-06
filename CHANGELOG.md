@@ -1,5 +1,8 @@
 # Changelog
 
+## [v1.0.6](https://github.com/masa23/mmauth/compare/v1.0.5...v1.0.6) - 2026-01-06
+- SPFの判定パッケージを追加 by @masa23 in https://github.com/masa23/mmauth/pull/14
+
 ## [v1.0.5](https://github.com/masa23/mmauth/compare/v1.0.4...v1.0.5) - 2025-11-18
 - DKIMのVerifyがすべてpassになる不具合を修正 by @masa23 in https://github.com/masa23/mmauth/pull/12
 
