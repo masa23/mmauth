@@ -4,7 +4,7 @@
 * [English](README.md)
 
 DKIM署名、ARC署名を行うGoライブラリです。  
-[RFC6376](https://datatracker.ietf.org/doc/html/rfc6376)、[RFC8617](https://datatracker.ietf.org/doc/html/rfc8617)、に準拠することを目指しています。  
+[RFC6376](https://datatracker.ietf.org/doc/html/rfc6376)、[RFC8617](https://datatracker.ietf.org/doc/html/rfc8617)、に準拠することを目指しています。
 
 ## 特長
 
@@ -14,7 +14,7 @@ DKIM署名、ARC署名を行うGoライブラリです。
 ## インストール
 
 ```bash
-go get github.com/masa23/mmauth
+ go get github.com/masa23/mmauth
 ```
 
 ## 使用例
@@ -24,6 +24,13 @@ go get github.com/masa23/mmauth
 ## ライセンス
 
 このプロジェクトは MIT ライセンスのもとで公開されています。詳細は [LICENSE](LICENSE) ファイルをご覧ください。
+
+### SPF テストデータのライセンス
+
+`spf/pyspf/test` ディレクトリにある SPF テストデータには別々のライセンスが付与されています:
+- `rfc4408-tests.yml` は BSD 系ライセンスです。詳細は [spf/pyspf/test/rfc4408-tests.LICENSE](spf/pyspf/test/rfc4408-tests.LICENSE) を参照してください。
+- `rfc7208-tests.yml` は BSD 系ライセンスです。詳細は [spf/pyspf/test/rfc7208-tests.LICENSE](spf/pyspf/test/rfc7208-tests.LICENSE) を参照してください。
+- その他のテストファイルは Python Software Foundation License Version 2 の下でライセンスされています。詳細は [spf/pyspf/LICENSE](spf/pyspf/LICENSE) を参照してください。
 
 ## Thanks!
 
