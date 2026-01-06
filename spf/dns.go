@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 type Status string
@@ -254,17 +255,6 @@ func (d *dnsResolverImpl) lookupA(name string) ([]net.IP, *Result) {
 		}
 	}
 
-	// void lookup (NOERROR/NODATA) のチェック
-	// Check for void lookup (NOERROR/NODATA)
-	if len(aIPs) == 0 {
-		d.voidCount++
-		// ただし、voidCountが2以上の場合はエラーを返す (void-over-limitテスト対応)
-		// However, if voidCount is 2 or more, return an error (for void-over-limit test compatibility)
-		if d.voidCount > 2 {
-			return nil, &Result{Status: PermError, Reason: "Void lookup limit exceeded"}
-		}
-	}
-
 	return aIPs, nil
 }
 func (d *dnsResolverImpl) lookupAAAA(name string) ([]net.IP, *Result) {
@@ -279,17 +269,6 @@ func (d *dnsResolverImpl) lookupAAAA(name string) ([]net.IP, *Result) {
 	for _, ip := range ips {
 		if ip.To4() == nil {
 			aaaaIPs = append(aaaaIPs, ip)
-		}
-	}
-
-	// void lookup (NOERROR/NODATA) のチェック
-	// Check for void lookup (NOERROR/NODATA)
-	if len(aaaaIPs) == 0 {
-		d.voidCount++
-		// ただし、voidCountが2以上の場合はエラーを返す (void-over-limitテスト対応)
-		// However, if voidCount is 2 or more, return an error (for void-over-limit test compatibility)
-		if d.voidCount > 2 {
-			return nil, &Result{Status: PermError, Reason: "Void lookup limit exceeded"}
 		}
 	}
 
@@ -368,6 +347,7 @@ func (d *dnsResolverImpl) lookupRecord(domain string) (*Record, *Result) {
 
 // CheckSPF はSPFレコードを評価して結果を返します。
 func (d *dnsResolverImpl) CheckSPF(ip net.IP, domain, sender, helo string) *Result {
+	now := time.Now()
 	// RFC 7208 4.3 初期処理
 	// HELOドメインの有効性をチェックします
 	// HELOがIPリテラルの場合は有効です
@@ -422,7 +402,7 @@ func (d *dnsResolverImpl) CheckSPF(ip net.IP, domain, sender, helo string) *Resu
 		return res
 	}
 
-	return rec.Evaluate(ip, domain, sender, helo, SPFResolver(d), 0)
+	return rec.Evaluate(ip, domain, sender, helo, now, SPFResolver(d), 0)
 }
 
 // --- ヘルパー: RFC 7208 4.6.4 term カウンター ---

@@ -1,7 +1,6 @@
 package spf
 
 import (
-	"fmt"
 	"testing"
 )
 
@@ -38,8 +37,6 @@ func TestIsValidDomainSpec(t *testing.T) {
 			result := isValidDomainSpec(tc.input)
 			if result != tc.expected {
 				t.Errorf("isValidDomainSpec(%q) = %v; expected %v", tc.input, result, tc.expected)
-			} else {
-				fmt.Printf("PASS: %s - isValidDomainSpec(%q) = %v\n", tc.name, tc.input, result)
 			}
 		})
 	}

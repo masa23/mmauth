@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -496,12 +497,6 @@ func (r *pyspfResolver) ptrLookup(addr string) ([]string, error) {
 		key = strings.Join(parts, ".") + ".ip6.arpa"
 	}
 
-	// デバッグのために利用可能なすべてのキーを出力
-	for k := range r.zonedata {
-		if strings.Contains(k, "in-addr.arpa") || strings.Contains(k, "ip6.arpa") {
-		}
-	}
-
 	items, ok := r.zonedata[key]
 	if !ok {
 		return nil, &net.DNSError{Name: key, IsNotFound: true}
@@ -643,7 +638,8 @@ func runSPFCheck(resv SPFResolver, hostIP, helo, mailfrom string) *Result {
 		// SPFがない場合に"none"がここで浮き出る；スイートはそれを期待しています
 		return rr
 	}
-	return rec.Evaluate(ip, domain, sender, helo, resv, 0)
+	now := time.Now()
+	return rec.Evaluate(ip, domain, sender, helo, now, resv, 0)
 }
 
 func statusFromString(s string) Status {

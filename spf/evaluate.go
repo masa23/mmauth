@@ -7,28 +7,26 @@ import (
 	"time"
 )
 
-func (r *Record) Evaluate(ip net.IP, domain, sender, helo string, resv SPFResolver, depth int) *Result {
+func (r *Record) Evaluate(ip net.IP, domain, sender, helo string, now time.Time, resv SPFResolver, depth int) *Result {
 	if depth > 10 {
 		return &Result{Status: PermError, Reason: "include/redirect depth exceeded"}
 	}
 
 	// 1) mechanisms
-	res := r.evaluateMechanisms(ip, domain, sender, helo, resv, depth)
-	// evaluateMechanisms は「メカニズムで確定」したらそれを返す。
-	// ここに来た時点では「メカニズムで確定しなかった」状態の結果（基本 Neutral）を返している。
+	res := r.evaluateMechanisms(ip, domain, sender, helo, now, resv, depth)
 
 	// 2) redirect modifier
-	res = r.handleRedirectModifier(res, ip, domain, sender, helo, resv, depth)
+	res = r.handleRedirectModifier(res, ip, domain, sender, helo, now, resv, depth)
 
 	// 3) 何もマッチしなければ Neutral (RFC 7208 4.7/1)
 	return res
 }
 
-func (r *Record) evaluateMechanisms(ip net.IP, domain, sender, helo string, resv SPFResolver, depth int) *Result {
+func (r *Record) evaluateMechanisms(ip net.IP, domain, sender, helo string, now time.Time, resv SPFResolver, depth int) *Result {
 	var last *Result
 
 	for _, me := range r.Mechanisms {
-		match, mres := r.matchMechanism(me, ip, domain, sender, helo, resv, depth)
+		match, mres := r.matchMechanism(me, ip, domain, sender, helo, now, resv, depth)
 		if mres != nil { // Temp/Perm error
 			return mres
 		}
@@ -40,7 +38,7 @@ func (r *Record) evaluateMechanisms(ip net.IP, domain, sender, helo string, resv
 
 			// exp= modifier (fail時のみ)
 			var expErr *Result
-			result, expErr = r.handleExpModifier(result, ip, domain, sender, helo, resv)
+			result, expErr = r.handleExpModifier(result, ip, domain, sender, helo, now, resv)
 			if expErr != nil {
 				return expErr
 			}
@@ -57,7 +55,7 @@ func (r *Record) evaluateMechanisms(ip net.IP, domain, sender, helo string, resv
 	return res
 }
 
-func (r *Record) handleExpModifier(result *Result, ip net.IP, domain, sender, helo string, resv SPFResolver) (*Result, *Result) {
+func (r *Record) handleExpModifier(result *Result, ip net.IP, domain, sender, helo string, now time.Time, resv SPFResolver) (*Result, *Result) {
 	if result == nil || result.Status != Fail {
 		return result, nil
 	}
@@ -83,7 +81,7 @@ func (r *Record) handleExpModifier(result *Result, ip net.IP, domain, sender, he
 		Sender:      sender,
 		Helo:        helo,
 		Receiver:    domain,
-		Now:         time.Now(),
+		Now:         now,
 		DNSResolver: resv,
 	}
 
@@ -167,7 +165,7 @@ func (r *Record) handleExpModifier(result *Result, ip net.IP, domain, sender, he
 	return result, nil
 }
 
-func (r *Record) handleRedirectModifier(current *Result, ip net.IP, domain, sender, helo string, resv SPFResolver, depth int) *Result {
+func (r *Record) handleRedirectModifier(current *Result, ip net.IP, domain, sender, helo string, now time.Time, resv SPFResolver, depth int) *Result {
 	if depth > 10 {
 		return &Result{Status: PermError, Reason: "include/redirect depth exceeded"}
 	}
@@ -191,7 +189,7 @@ func (r *Record) handleRedirectModifier(current *Result, ip net.IP, domain, send
 		Domain:      domain,
 		Sender:      sender,
 		Helo:        helo,
-		Now:         time.Now(),
+		Now:         now,
 		DNSResolver: resv,
 	}
 
@@ -217,7 +215,7 @@ func (r *Record) handleRedirectModifier(current *Result, ip net.IP, domain, send
 		return res
 	}
 
-	return rec.Evaluate(ip, expandedRedir, sender, helo, resv, depth+1)
+	return rec.Evaluate(ip, expandedRedir, sender, helo, now, resv, depth+1)
 }
 
 func qualToStatus(q Qualifier) Status {

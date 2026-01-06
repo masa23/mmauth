@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-func (r *Record) matchMechanism(me MechanismEntry, ip net.IP, domain, sender, helo string, resv SPFResolver, depth int) (bool, *Result) {
+func (r *Record) matchMechanism(me MechanismEntry, ip net.IP, domain, sender, helo string, now time.Time, resv SPFResolver, depth int) (bool, *Result) {
 	ctx := MacroContext{
 		IP:          ip,
 		Domain:      domain,
 		Sender:      sender,
 		Helo:        helo,
-		Now:         time.Now(),
+		Now:         now,
 		DNSResolver: resv,
 	}
 
@@ -43,7 +43,7 @@ func (r *Record) matchMechanism(me MechanismEntry, ip net.IP, domain, sender, he
 		if res := incrementDNSMechanismCounter(resv); res != nil {
 			return false, res
 		}
-		return r.matchIncludeMechanism(me, ip, domain, sender, helo, resv, depth, ctx)
+		return r.matchIncludeMechanism(me, ip, domain, sender, helo, now, resv, depth, ctx)
 	case MechanismExists:
 		// RFC 7208 4.6.4 term counter
 		// RFC 7208 4.6.4 用語カウンター
@@ -220,7 +220,7 @@ func (r *Record) matchMXMechanism(me MechanismEntry, ip net.IP, domain, sender, 
 	return false, nil
 }
 
-func (r *Record) matchIncludeMechanism(me MechanismEntry, ip net.IP, domain, sender, helo string, resv SPFResolver, depth int, ctx MacroContext) (bool, *Result) {
+func (r *Record) matchIncludeMechanism(me MechanismEntry, ip net.IP, domain, sender, helo string, now time.Time, resv SPFResolver, depth int, ctx MacroContext) (bool, *Result) {
 	if depth > 10 {
 		return false, &Result{Status: PermError, Reason: "include/redirect depth exceeded"}
 	}
@@ -268,7 +268,7 @@ func (r *Record) matchIncludeMechanism(me MechanismEntry, ip net.IP, domain, sen
 		return false, res
 	}
 
-	ires := rec.Evaluate(ip, expandedIncDomain, sender, helo, resv, depth+1)
+	ires := rec.Evaluate(ip, expandedIncDomain, sender, helo, now, resv, depth+1)
 
 	if ires.Status == Pass {
 		return true, nil
