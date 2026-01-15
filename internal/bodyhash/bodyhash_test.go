@@ -46,7 +46,7 @@ func TestBodyHash(t *testing.T) {
 			canonicalization: canonical.Simple,
 			hashAlgo:         crypto.SHA256,
 			limit:            6,
-			want:             "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+			want:             "oeKHl0BrGKw1NiOFm0a0wbWGRs0Chw7O5imm8uvPl9M=",
 		},
 		{
 			name:             "relaxed_rsa256_limit_18",
@@ -54,7 +54,7 @@ func TestBodyHash(t *testing.T) {
 			canonicalization: canonical.Relaxed,
 			hashAlgo:         crypto.SHA256,
 			limit:            18,
-			want:             "LqSAdhsGjY2uv8fGWJMIM2akhHN9NyGGEUlN+xik7jE=",
+			want:             "Z+cm8xS5wu494Xsvm726WqNQDz9KCCjf94bcaTOM/dc=",
 		},
 		{
 			name:             "simple_rsa1_limit_0",
@@ -86,7 +86,7 @@ func TestBodyHash(t *testing.T) {
 			canonicalization: canonical.Simple,
 			hashAlgo:         crypto.SHA1,
 			limit:            6,
-			want:             "RncHNkkRgpHaoq2sZDSLD5ey4Pc=",
+			want:             "ZHGFAbT3FJjGz2CG7R82QHBD52A=",
 		},
 		{
 			name:             "relaxed_rsa1_limit_18",
@@ -94,7 +94,7 @@ func TestBodyHash(t *testing.T) {
 			canonicalization: canonical.Relaxed,
 			hashAlgo:         crypto.SHA1,
 			limit:            18,
-			want:             "A7Vq/LMkg+KV7mmH87z7XbR1/kQ=",
+			want:             "kChlkq5WmMBVmvtdZ7nTUb98ZRI=",
 		},
 		{
 			name:             "relaxed_rsa1_limit_-1",

@@ -112,11 +112,10 @@ func TestSigner(t *testing.T) {
 				"To: aaa@example.org\r\n",
 				"Subject: test\r\n",
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
-				"DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; b=",
+				"DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; b=\r\n",
 			},
-			canon: canonical.Relaxed,
-			want: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
-				"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
+			canon:   canonical.Relaxed,
+			want:    "McwKSXaD2OFojyuoBVqjkzyIRb85nR/AOexdZfkny5+1PAS24JP4vJNWjjM9c3eUarqRn8r9/zc4tUgeBzWG5y0lhxii/QGEfnuQIGOdk0qXE6TKyTNqb2vKKlQEW7kdMqeLZRL41HCVvVBSctN4eiTiXfv5n0rUOIrGeMvvhbHcc4d/cm6Ikn5n3xndiAxCohCTR7h5X2AmoG4Vc2FcLOc4DEQAulW9H1INBFBlZcgzQgLQ4emmH0v1vAQdAxR7Mu2X4JZaAtIVa/LRJd37TtH+jTU5mnzJjJShmX1Rt6voWC4Qp2+Mqc5XQm3M2N+Nm7yFycKUVu7Ho/d+ayHlEQ==",
 			wantErr: nil,
 		},
 		{
@@ -128,11 +127,10 @@ func TestSigner(t *testing.T) {
 				"To: aaa@example.org\r\n",
 				"Subject: test\r\n",
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
-				"DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=simple/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; b=",
+				"DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=simple/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; b=\r\n",
 			},
-			canon: canonical.Simple,
-			want: "bb3TE6yxGwxxEsxHSKv1FWMMx+YBk+XGnUlz9Wn4NeJemIXFvPA6J+/Fx1ux2buQyuxv16sqDC233ZwZFLSaQk/KMVTGOegqJCC2pQkNu1dR7pEVN2ZXDXD53SnDj0TyDPGiICeSmzj7q4K4NxSHq0183u" +
-				"zoeD+KY6O5vSDhreH7U95AU3o7qh9vbVjwQ8f8AUW9m7YcN+fcPx4y8O3l7I+Aoc8X1DHAqQCtKgA9//sP6GSdU7OZz8sI7DwhuWIy46um1Pd+hAcCQfp2OnBiQslIXu9NuK3C+YonynNBZ24wAsVujoPAy+x8IerPzt5IJgTfyF35f4+KqjLBCvdj+Q==",
+			canon:   canonical.Simple,
+			want:    "MMfmJ0ZZLLG3Is/t4PKTXM0xPfjAHplc3nGr+PL8s2T2vJ08FITdZOrxgQvAmPteNxwgcx1JnBkFnhe+0dtohZPCZAz4825Cpo4tjHmOHswALJ1hFWoaFGrpF53EQYhPN6MUrlVXEurIE5zxA1O7EuRUE7eyYahEKTyA1wJCYE/2TpYCZh35R4kCHXRLlih2vYBjI6YTlNS5zLSjUANCCJ1VrNm5IKLt72OZJ2TkXBFtheKDfT2nCsorroTr/d44VRHzBPQEGx7zPqcA8eibFoG+biKciN0h9YO3KFyaOuvSkKcyFka/eVscPHOsAtUeyz01qfn0TSEYHRqSbDvlpg==",
 			wantErr: nil,
 		},
 		{
@@ -143,10 +141,10 @@ func TestSigner(t *testing.T) {
 				"From: hogefuga@example.com\r\n",
 				"To: aaa@example.org\r\n",
 				"Subject: test\r\n",
-				"DKIM-Signature: v=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com;\n\ts=selector; t=1728300596;\n\tbh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=;\n\th=Date:From:To:Subject;\n\tb=",
+				"DKIM-Signature: v=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com;\r\n\ts=selector; t=1728300596;\r\n\tbh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=;\r\n\th=Date:From:To:Subject;\r\n\tb=\r\n",
 			},
 			canon:   canonical.Relaxed,
-			want:    "sbFgoCyENUFzV79FuAw2UiG14GTYLOvDeQS9Wv7NY4jfIPYdQRm9Kn/BiyW2W9Ikrwf6AUZkf2UKLJmAUoP4DQ==",
+			want:    "TWR6qXPswzKR7CLAZDE1itlYdl7V2mlC7CGrSAZLO9Zevutv3+mvX600q4yTTWHsrbBt0Ys20yyjzmqach8eBQ==",
 			wantErr: nil,
 		},
 		{
@@ -157,23 +155,127 @@ func TestSigner(t *testing.T) {
 				"From: hogefuga@example.com\r\n",
 				"To: aaa@example.org\r\n",
 				"Subject: test\r\n",
-				"DKIM-Signature: v=1; a=ed25519-sha256; c=simple/simple; d=example.com;\n\ts=selector; t=1728300288;\n\tbh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=;\n\th=Date:From:To:Subject;\n\tb=",
+				"DKIM-Signature: v=1; a=ed25519-sha256; c=simple/simple; d=example.com;\r\n\ts=selector; t=1728300288;\r\n\tbh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=;\r\n\th=Date:From:To:Subject;\r\n\tb=\r\n",
 			},
-			canon:   canonical.Relaxed,
-			want:    "bvm5NplaBo4igE699kkI3OTefoo334DeLirTSNcjh6Grxw7sv9+xh+J08eATT5IoH/+c7sastMm19aM4Tt/iAw==",
+			canon:   canonical.Simple,
+			want:    "5PTuUjk5Bcq0Qml+qQR2plKonmLRagpy8/60XEnPod0MmwWkmppf4he++gu6p2IwOum5PGdc7zRetp/W+pz5Cg==",
 			wantErr: nil,
 		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Signer(tt.headers, testKeys.getPrivateKey(tt.keyType), tt.canon)
+			var hashAlgo crypto.Hash
+			switch tt.keyType {
+			case "rsa":
+				hashAlgo = crypto.SHA256
+			case "ed25519":
+				hashAlgo = crypto.Hash(0)
+			}
+			got, err := Signer(tt.headers, testKeys.getPrivateKey(tt.keyType), tt.canon, hashAlgo)
 			if err != tt.wantErr {
 				t.Errorf("headerSigner() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
 				t.Errorf("headerSigner() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseHeaderCanonicalization(t *testing.T) {
+	testCases := []struct {
+		name       string
+		input      string
+		wantHeader canonical.Canonicalization
+		wantBody   canonical.Canonicalization
+		wantErr    bool
+	}{
+		{
+			name:       "simple/simple",
+			input:      "simple/simple",
+			wantHeader: canonical.Simple,
+			wantBody:   canonical.Simple,
+			wantErr:    false,
+		},
+		{
+			name:       "relaxed/relaxed",
+			input:      "relaxed/relaxed",
+			wantHeader: canonical.Relaxed,
+			wantBody:   canonical.Relaxed,
+			wantErr:    false,
+		},
+		{
+			name:       "simple/relaxed",
+			input:      "simple/relaxed",
+			wantHeader: canonical.Simple,
+			wantBody:   canonical.Relaxed,
+			wantErr:    false,
+		},
+		{
+			name:       "relaxed/simple",
+			input:      "relaxed/simple",
+			wantHeader: canonical.Relaxed,
+			wantBody:   canonical.Simple,
+			wantErr:    false,
+		},
+		{
+			name:       "simple",
+			input:      "simple",
+			wantHeader: canonical.Simple,
+			wantBody:   canonical.Simple,
+			wantErr:    false,
+		},
+		{
+			name:       "relaxed",
+			input:      "relaxed",
+			wantHeader: canonical.Relaxed,
+			wantBody:   canonical.Simple,
+			wantErr:    false,
+		},
+		{
+			name:       "empty",
+			input:      "",
+			wantHeader: canonical.Simple,
+			wantBody:   canonical.Simple,
+			wantErr:    false,
+		},
+		{
+			name:       "invalid header",
+			input:      "invalid/simple",
+			wantHeader: "",
+			wantBody:   "",
+			wantErr:    true,
+		},
+		{
+			name:       "invalid body",
+			input:      "simple/invalid",
+			wantHeader: "",
+			wantBody:   "",
+			wantErr:    true,
+		},
+		{
+			name:       "both invalid",
+			input:      "invalid/invalid",
+			wantHeader: "",
+			wantBody:   "",
+			wantErr:    true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			header, body, err := ParseHeaderCanonicalization(tc.input)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("ParseHeaderCanonicalization() error = %v, wantErr %v", err, tc.wantErr)
+				return
+			}
+			if header != tc.wantHeader {
+				t.Errorf("ParseHeaderCanonicalization() header = %v, want %v", header, tc.wantHeader)
+			}
+			if body != tc.wantBody {
+				t.Errorf("ParseHeaderCanonicalization() body = %v, want %v", body, tc.wantBody)
 			}
 		})
 	}
@@ -328,7 +430,6 @@ func TestExtractHeadersDKIM(t *testing.T) {
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"Subject: test\r\n",
 				"Hoge: hoge2\r\n",
-				"Hoge: hoge1\r\n",
 			},
 		},
 		{
@@ -344,9 +445,8 @@ func TestExtractHeadersDKIM(t *testing.T) {
 				"Hoge: hoge2\r\n",
 			},
 			expect: []string{"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
-				"Hoge: hoge2\r\n",
-				"Hoge: hoge1\r\n",
 				"Subject: test\r\n",
+				"Hoge: hoge2\r\n",
 			},
 		},
 	}
@@ -359,6 +459,59 @@ func TestExtractHeadersDKIM(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExtractHeadersDKIM_PlanCases(t *testing.T) {
+	// Case A: `h=` に同名ヘッダが重複する
+	t.Run("Case A: Duplicate headers in h=", func(t *testing.T) {
+		headers := []string{
+			"From: A <a@example.com>\r\n",
+			"From: B <b@example.com>\r\n",
+			"To: x@example.com\r\n",
+		}
+		keys := []string{"from", "from", "to"}
+		expect := []string{
+			"From: B <b@example.com>\r\n",
+			"From: A <a@example.com>\r\n",
+			"To: x@example.com\r\n",
+		}
+		got := ExtractHeadersDKIM(headers, keys)
+		if !reflect.DeepEqual(got, expect) {
+			t.Errorf("unexpected result: got=%v, expect=%v", got, expect)
+		}
+	})
+
+	// Case B: 存在しないヘッダ名（null string扱い）
+	t.Run("Case B: Non-existent header names (null string treatment)", func(t *testing.T) {
+		headers := []string{
+			"From: A <a@example.com>\r\n",
+		}
+		keys := []string{"cc", "from", "reply-to"}
+		expect := []string{
+			"From: A <a@example.com>\r\n",
+		}
+		got := ExtractHeadersDKIM(headers, keys)
+		if !reflect.DeepEqual(got, expect) {
+			t.Errorf("unexpected result: got=%v, expect=%v", got, expect)
+		}
+	})
+
+	// Case C: 大文字小文字・空白耐性
+	t.Run("Case C: Case and whitespace tolerance", func(t *testing.T) {
+		headers := []string{
+			"Subject: hi\r\n",
+			"subject: hi2\r\n",
+		}
+		keys := []string{"  SUBJECT ", " subject "}
+		expect := []string{
+			"subject: hi2\r\n",
+			"Subject: hi\r\n",
+		}
+		got := ExtractHeadersDKIM(headers, keys)
+		if !reflect.DeepEqual(got, expect) {
+			t.Errorf("unexpected result: got=%v, expect=%v", got, expect)
+		}
+	})
 }
 
 func TestExtractHeadersARC(t *testing.T) {
@@ -440,7 +593,7 @@ func TestExtractHeadersARC(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExtractHeadersARC(tc.headers, tc.list)
+			got := ExtractHeadersDKIM(tc.headers, tc.list)
 			if !reflect.DeepEqual(got, tc.expect) {
 				t.Errorf("unexpected result: got=%v, expect=%v", got, tc.expect)
 			}

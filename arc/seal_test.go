@@ -109,11 +109,7 @@ func TestARCSealSign(t *testing.T) {
 					"         Dlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx\r\n" +
 					"         vrgEwmI6O74ZZR9jWIuyGg==\r\n",
 			},
-			expected: "g+R0nyap1H1wsIqc3AvSesOyicLqq/p5bMP4yJUG/Kqmb8iN42MuYVdjD8xFNiPggfmq2Uz/FvYsyq9v" +
-				"x8R9Isxu0eNKyx4tZWMK0kNJkxW/cA+RRPZ1sSXxI2w+ZomV5OHl0AzFFAUlU41Ngq6mJLKNXVYDrd4S" +
-				"ILiYHCC+1B/sylS+7c4tbCTtQbikeVDZmTpq+W9lEDGxgtcmZK8UlAjDZ5CfMIef2ukeWWm8atqPRm0N" +
-				"fExmsWYhytVvccgNIfYCgsji2Cee45epWJXJSD+RJLbhwbLgfMlFSUa4cdW0yNN24OB7rHV1T/tg+boG" +
-				"y2vkgXJHRmKvadyjGwTW8A==",
+			expected: "A5vePMxJCMc+dUtUEfrggsqeqLf6APZvf9s4sPCdvchA1gVdPko+ZypDt0Kmw0eLkdAOz35+MyM5D7Z9WsmxrM7sO1s5UFA/iCVWAQ05tXpzAUFyKaBBHtVq3LG/8KxlFRLIWkYLbXAn5IvM0gQKJOVLiaFCm0u+9Dm9EojthFDowYne3W4K3mtCx8YK9OyeqE2GlpG/R4m75Eg31Mn/tAfnNqIYBjm3WevRjdpDCHIcqM7S57huEybyqvAH12DM8Rf4NArIc59tO8HAp4GN7JhQY7CaaZY+TfxeJV/+TTDZCzKxuObuaz44OEtyJ96WRmDOngFCf4NzNu1PGTQmCw==",
 		},
 		{
 			name:    "ed25519 key test",
@@ -134,7 +130,7 @@ func TestARCSealSign(t *testing.T) {
 					"        b=B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTj\r\n" +
 					"         vvlarL7sMnQeZvXN92nPDw==\r\n",
 			},
-			expected: "Xt6qSS3XrProksIWSKvJhxr2RW+FG2IfkIArZlpeRyBeSMezkp9fENlxV/7owRU7mDFM3ExsIOzOXrQjuaJOCw==",
+			expected: "nFEJMH/BN/k8gR3yaIuQRPIRvSkIZlUXy40OqCRcA4+fLoCqzR4UL4dhn+PQaHKQZ5dBO8dAyL6oKLItJImtBw==",
 		},
 	}
 

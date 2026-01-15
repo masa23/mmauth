@@ -103,8 +103,9 @@ func ParseAddressDomain(s string) (string, error) {
 }
 
 // ヘッダリストから指定された複数のヘッダをARC署名順で抽出する
+// Deprecated: Use header.ExtractHeadersDKIM instead for ARC as it follows the same rules.
 func ExtractHeadersARC(headers []string, keys []string) []string {
-	return header.ExtractHeadersARC(headers, keys)
+	return header.ExtractHeadersDKIM(headers, keys)
 }
 
 // ヘッダリストから指定された複数のヘッダをDKIM署名順で抽出する

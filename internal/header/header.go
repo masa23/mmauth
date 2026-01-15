@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -75,22 +76,33 @@ func splitStringIntoChunks(s string, chunkSize int) []string {
 }
 
 // ヘッダ、秘密鍵、正規化の種類を指定して署名を生成する
-func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalization) (string, error) {
+func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalization, hashAlgo crypto.Hash) (string, error) {
 	var s string
 	for _, header := range headers {
 		s += canonical.Header(header, canonical.Canonicalization(canon))
 	}
-	// 末尾のCRLFを削除
-	s = strings.TrimSuffix(s, crlf)
 
 	// 署名するヘッダをハッシュ化
-	hashed := sha256.Sum256([]byte(s))
+	var hashed []byte
+	switch hashAlgo {
+	case crypto.SHA256:
+		sum := sha256.Sum256([]byte(s))
+		hashed = sum[:]
+	case crypto.SHA1:
+		// SHA1のimportが必要
+		sha1Sum := sha1.Sum([]byte(s))
+		hashed = sha1Sum[:]
+	default:
+		// デフォルトはSHA256
+		sum := sha256.Sum256([]byte(s))
+		hashed = sum[:]
+	}
 
 	var hash crypto.Hash
 
 	switch key.Public().(type) {
 	case *rsa.PublicKey:
-		hash = crypto.SHA256
+		hash = hashAlgo
 	case ed25519.PublicKey:
 		hash = crypto.Hash(0)
 	default:
@@ -166,56 +178,44 @@ func lowercaseAndRemoveDuplicates(keys []string) []string {
 	return RemoveDuplicates(keys)
 }
 
-// headersから指定したヘッダリストのヘッダを抽出する
-// ただし、重複してヘッダが存在する場合は、最後に出現したものを先に返す
+// ExtractHeadersDKIM extracts headers from the message according to RFC 6376 §5.4.2.
+// It processes the h= tag header list from left to right, consuming one header of each
+// specified header type from the bottom-most (last occurrence) to top-most direction.
 func ExtractHeadersDKIM(headers []string, keys []string) []string {
 	var ret []string
 
-	// 重複を削除し、小文字に変換
-	keys = lowercaseAndRemoveDuplicates(keys)
-
-	// ヘッダを抽出
-	maps := extractHeaders(headers, keys)
-
-	for _, m := range maps {
-		for _, v := range m {
-			// vを逆順にして返す
-			for i := len(v) - 1; i >= 0; i-- {
-				ret = append(ret, v[i])
-			}
+	// 同名ヘッダを収集（出現順に格納）
+	byName := make(map[string][]string)
+	for _, header := range headers {
+		k, _, ok := strings.Cut(header, ":")
+		if !ok {
+			continue
 		}
+		key := strings.ToLower(strings.TrimSpace(k))
+		byName[key] = append(byName[key], header)
+	}
+
+	// keysの左から順に処理
+	for _, key := range keys {
+		key = strings.ToLower(strings.TrimSpace(key))
+
+		// 同名ヘッダが複数存在する場合はメッセージ内の末尾側（bottom-most）から1つずつ取り出して消費
+		if headersForKey, exists := byName[key]; exists && len(headersForKey) > 0 {
+			// 末尾要素を取り出す
+			lastIndex := len(headersForKey) - 1
+			ret = append(ret, headersForKey[lastIndex])
+
+			// スライスを縮めて消費
+			byName[key] = headersForKey[:lastIndex]
+		}
+		// 存在しないヘッダ名（null string扱い）は追加しない
 	}
 
 	return ret
 }
 
-// headersから指定したヘッダリストのヘッダを抽出する
-// ただし、重複してヘッダが存在する場合は、最後に出現したもののみを返す
-func ExtractHeadersARC(headers []string, keys []string) []string {
-	var ret []string
-
-	// 重複を削除し、小文字に変換
-	keys = lowercaseAndRemoveDuplicates(keys)
-
-	// ヘッダを抽出
-	maps := extractHeaders(headers, keys)
-
-	// keys順に抽出する
-	for _, k := range keys {
-		for _, m := range maps {
-			if v, ok := m[k]; ok {
-				// 最後に出現したものを返す
-				ret = append(ret, v[len(v)-1])
-				break
-			}
-		}
-	}
-
-	return ret
-}
-
-// headersから指定したヘッダリストのヘッダを抽出する
-// ただし、重複してヘッダが存在する場合は、すべてを返す
+// ExtractHeadersAll extracts all headers matching the specified keys.
+// This function is used for ARC header processing where all instances are needed.
 func ExtractHeadersAll(headers []string, keys []string) []string {
 	var ret []string
 

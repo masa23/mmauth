@@ -117,7 +117,9 @@ func (arc *Signature) Verify(headers []string, bodyHash string, domainKey *domai
 		return
 	}
 	if domainKey == nil {
-		domKey, err := domainkey.LookupARCDomainKey(arc.arcSeal.Selector, arc.arcSeal.Domain)
+		// タイムアウト付きのリゾルバーを使用
+		resolver := domainkey.NewDefaultTXTResolver()
+		domKey, err := domainkey.LookupDKIMDomainKeyWithResolver(arc.arcSeal.Selector, arc.arcSeal.Domain, resolver)
 		if errors.Is(err, domainkey.ErrNoRecordFound) {
 			arc.VerifyResult = &VerifyResult{
 				status: VerifyStatusPermErr,
