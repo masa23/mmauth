@@ -13,7 +13,7 @@ type limitWriter struct {
 // Write は p を基底の Writer に書き込みますが、limit を超える部分は破棄します。
 func (lw *limitWriter) Write(p []byte) (n int, err error) {
 	if lw.limit <= 0 {
-		// 制限が既に達成されている場合は何も書き込まずに成功を返す
+		// 制限の残りが 0 以下（既に達成済みまたは無効値）の場合は何も書き込まずに成功を返す
 		return len(p), nil
 	}
 

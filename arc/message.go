@@ -216,11 +216,6 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 	// we add to the signing set is also CRLF-terminated so header canonicalization
 	// behaves consistently (especially for simple header canonicalization).
 	// AMSヘッダは署名対象に含めない
-	//amsHeader := "ARC-Message-Signature: " + ams.String() + "\r\n"
-	//signingHeaders = append(signingHeaders, amsHeader)
-	//amsHeaderRaw := "ARC-Message-Signature: " + ams.String() + "\r\n"
-	//amsHeader := canonical.Header(amsHeaderRaw, canonical.Canonicalization(canHeader))
-	//signingHeaders = append(signingHeaders, amsHeader)
 
 	signature, err := header.Signer(signingHeaders, key, canonical.Canonicalization(canHeader), ams.canonnAndAlgo.HashAlgo)
 	if err != nil {
@@ -362,8 +357,6 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	// 署名するヘッダをハッシュ化
 	hash := ams.canonnAndAlgo.HashAlgo.New()
 	hash.Write([]byte(s))
-
-	// デバッグ情報の出力
 
 	// 署名の検証
 	decoded, err := base64Decode(domainKey.PublicKey)

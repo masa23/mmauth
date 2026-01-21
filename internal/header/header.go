@@ -77,10 +77,11 @@ func splitStringIntoChunks(s string, chunkSize int) []string {
 
 // ヘッダ、秘密鍵、正規化の種類を指定して署名を生成する
 func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalization, hashAlgo crypto.Hash) (string, error) {
-	var s string
+	var sb strings.Builder
 	for _, header := range headers {
-		s += canonical.Header(header, canonical.Canonicalization(canon))
+		sb.WriteString(canonical.Header(header, canonical.Canonicalization(canon)))
 	}
+	s := sb.String()
 
 	// 署名するヘッダをハッシュ化
 	var hashed []byte

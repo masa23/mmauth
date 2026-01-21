@@ -1,6 +1,7 @@
 package arc
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -54,7 +55,7 @@ func TestParseARCSealForbiddenTags(t *testing.T) {
 				errMsg := err.Error()
 				found := false
 				for _, expected := range expectedErrMsgs {
-					if contains(errMsg, expected) {
+					if strings.Contains(errMsg, expected) {
 						found = true
 						break
 					}
@@ -65,9 +66,4 @@ func TestParseARCSealForbiddenTags(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) < len(s) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || contains(s[1:len(s)-1], substr)))
 }
