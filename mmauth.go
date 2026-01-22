@@ -291,12 +291,18 @@ func (m *MMAuth) Verify() {
 			}
 		}
 	}
-	// 一番最後のARCの署名を検証する
+	// ARCの署名を検証する
 	if m.AuthenticationHeaders.ARCSignatures != nil {
 		max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
-		if max > 0 {
-			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(max)
+		for i := max; i >= 1; i-- {
+			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(i)
+			if arc == nil {
+				continue
+			}
 			sign := arc.GetARCMessageSignature()
+			if sign == nil {
+				continue
+			}
 			can := sign.GetCanonicalizationAndAlgorithm()
 			if can != nil {
 				bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{

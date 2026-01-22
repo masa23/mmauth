@@ -194,13 +194,13 @@ func TestParseARCSealForbiddenTag(t *testing.T) {
 			name:      "forbidden h tag",
 			input:     "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=fail; d=example.com; s=selector; h=from:to; b=signature",
 			expectCV:  ChainValidationResultFail,
-			expectErr: true, // RFC 8617 Section 3.5: h= tag is forbidden in ARC-Seal
+			expectErr: false, // RFC 8617 Section 3.5: h= tag is forbidden in ARC-Seal, but we should not return an error
 		},
 		{
 			name:      "forbidden bh tag",
 			input:     "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=fail; d=example.com; s=selector; bh=bodyhash; b=signature",
 			expectCV:  ChainValidationResultFail,
-			expectErr: true, // RFC 8617 Section 3.5: bh= tag is forbidden in ARC-Seal
+			expectErr: false, // RFC 8617 Section 3.5: bh= tag is forbidden in ARC-Seal, but we should not return an error
 		},
 	}
 

@@ -89,7 +89,32 @@ func (s *Signatures) GetARCChainValidation() ChainValidationResult {
 		return ChainValidationResultNone
 	}
 
-	// ここからインスタンスの結果をチェック
+	// すべてのインスタンスが検証済みかを確認
+	allVerified := true
+	for i := 1; i <= max; i++ {
+		a := s.GetInstance(i)
+		if a == nil || a.GetVerifyResult() == nil {
+			allVerified = false
+			break
+		}
+	}
+
+	// すべてのインスタンスが検証済みの場合、検証結果に基づいて判定
+	if allVerified {
+		// 最大インスタンスから1まで降順にチェック
+		for i := max; i >= 1; i-- {
+			a := s.GetInstance(i)
+			result := a.GetVerifyResult()
+			// いずれかのインスタンスで検証が失敗した場合はFail
+			if result.Status() != VerifyStatusPass {
+				return ChainValidationResultFail
+			}
+		}
+		// すべてのインスタンスがPassの場合はPass
+		return ChainValidationResultPass
+	}
+
+	// 検証が完了していない場合は、既存のARC-SealのCV結果をチェック
 	for i := 1; i <= max; i++ {
 		a := s.GetInstance(i)
 		seal := a.GetARCSeal()

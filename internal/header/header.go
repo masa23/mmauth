@@ -76,12 +76,42 @@ func splitStringIntoChunks(s string, chunkSize int) []string {
 }
 
 // ヘッダ、秘密鍵、正規化の種類を指定して署名を生成する
+//
+// RFC 6376 §3.7 (Computing the Message Hashes) requires the *signature header
+// field itself* (e.g. DKIM-Signature / ARC-Message-Signature / ARC-Seal) to be
+// fed to the header hash **without a trailing CRLF**, while all other signed
+// header fields MUST be terminated with a single CRLF.
+//
+// When you are signing DKIM/ARC, prefer SignerWithOmitLastCRLF(..., true).
 func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalization, hashAlgo crypto.Hash) (string, error) {
+	return SignerWithOmitLastCRLF(headers, key, canon, hashAlgo, false)
+}
+
+// SignerWithOmitLastCRLF is like Signer, but can omit the trailing CRLF from the
+// *last* canonicalized header field.
+//
+// This is required for DKIM/ARC signature computation where the signature
+// header field is hashed without its terminating CRLF.
+func SignerWithOmitLastCRLF(headers []string, key crypto.Signer, canon canonical.Canonicalization, hashAlgo crypto.Hash, omitLastCRLF bool) (string, error) {
+	// keyがnilの場合はエラーを返す
+	if key == nil {
+		return "", errors.New("private key is nil")
+	}
+
+	// key.Public()がnilを返す場合のエラーハンドリングを追加
+	publicKey := key.Public()
+	if publicKey == nil {
+		return "", errors.New("public key is nil")
+	}
+
 	var sb strings.Builder
 	for _, header := range headers {
 		sb.WriteString(canonical.Header(header, canonical.Canonicalization(canon)))
 	}
 	s := sb.String()
+	if omitLastCRLF {
+		s = strings.TrimSuffix(s, crlf)
+	}
 
 	// 署名するヘッダをハッシュ化
 	var hashed []byte
@@ -101,7 +131,7 @@ func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalizatio
 
 	var hash crypto.Hash
 
-	switch key.Public().(type) {
+	switch publicKey.(type) {
 	case *rsa.PublicKey:
 		hash = hashAlgo
 	case ed25519.PublicKey:

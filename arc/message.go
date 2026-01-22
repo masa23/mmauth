@@ -12,6 +12,7 @@ import (
 
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/internal/dkimheader"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -196,28 +197,15 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		}
 	}
 
-	// h= タグに指定されたヘッダ名の順序でヘッダを抽出
-	headerNames := strings.Split(ams.Headers, ":")
-	signingHeaders := make([]string, 0, len(headerNames)+1)
-	for _, name := range headerNames {
-		for _, header := range headers {
-			k, _, ok := strings.Cut(header, ":")
-			if !ok {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(k), strings.TrimSpace(name)) {
-				signingHeaders = append(signingHeaders, header)
-				break
-			}
-		}
-	}
+	// h= タグに指定されたヘッダ名の順序でヘッダを抽出 (DKIM方式に統一)
+	signingHeaders := header.ExtractHeadersDKIM(headers, strings.Split(ams.Headers, ":"))
 
-	// RFC 5322 header fields are terminated with CRLF. Ensure the signature header
-	// we add to the signing set is also CRLF-terminated so header canonicalization
-	// behaves consistently (especially for simple header canonicalization).
-	// AMSヘッダは署名対象に含めない
+	// AMSヘッダ自身を署名対象に追加 (b=値を空にしてcanonicalize)
+	amsSigHeader := dkimheader.StripBValueForSigning("ARC-Message-Signature: " + ams.String() + "\r\n")
+	signingHeaders = append(signingHeaders, amsSigHeader)
 
-	signature, err := header.Signer(signingHeaders, key, canonical.Canonicalization(canHeader), ams.canonnAndAlgo.HashAlgo)
+	// RFC 6376 §3.7: the signature header field itself is hashed without a trailing CRLF.
+	signature, err := header.SignerWithOmitLastCRLF(signingHeaders, key, canonical.Canonicalization(canHeader), ams.canonnAndAlgo.HashAlgo, true)
 	if err != nil {
 		return err
 	}
@@ -284,47 +272,29 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 	}
 
-	// ヘッダの抽出と連結
-	// ヘッダ名を抽出して比較するよう統一する
-	// AMSヘッダをヘッダリストから削除
-	filteredHeaders := make([]string, 0, len(headers))
+	// h= タグに指定されたヘッダ名の順序でヘッダを抽出
+	// AMS自身をh=抽出から除外するために、AMSをヘッダリストから削除
+	headersWithoutAMS := make([]string, 0, len(headers))
 	for _, header := range headers {
 		k, _, ok := strings.Cut(header, ":")
 		if !ok {
 			continue
 		}
 		if !strings.EqualFold(strings.TrimSpace(k), "ARC-Message-Signature") {
-			filteredHeaders = append(filteredHeaders, header)
-		}
-	}
-	// h= タグに指定されたヘッダ名の順序でヘッダを抽出
-	headerNames := strings.Split(ams.Headers, ":")
-	h := make([]string, 0, len(headerNames))
-	for _, name := range headerNames {
-		for _, header := range filteredHeaders {
-			k, _, ok := strings.Cut(header, ":")
-			if !ok {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(k), strings.TrimSpace(name)) {
-				h = append(h, header)
-				break
-			}
+			headersWithoutAMS = append(headersWithoutAMS, header)
 		}
 	}
 
-	// ARC-Message-Signatureヘッダを再構築 (b=タグは空)
-	amsForSigning := *ams
-	amsForSigning.Signature = ""
-	//amsHeaderForSigning := "ARC-Message-Signature: " + amsForSigning.String() + "\r\n"
-	//amsHeaderForSigningRaw := "ARC-Message-Signature: " + amsForSigning.String() + "\r\n"
-	//amsHeaderForSigning := canonical.Header(amsHeaderForSigningRaw, canonical.Canonicalization(ams.canonnAndAlgo.Header))
+	// h= タグに指定されたヘッダ名の順序でヘッダを抽出 (DKIM方式に統一)
+	h := header.ExtractHeadersDKIM(headersWithoutAMS, strings.Split(ams.Headers, ":"))
+
+	// ARC-Message-Signatureヘッダ自身を署名対象に追加 (b=値を空にしてcanonicalize)
+	amsSigHeader := dkimheader.StripBValueForSigning(ams.Raw())
 
 	// ヘッダの正規化
 	var s string
 	for _, header := range h {
 		// h=ARC-Sealがある場合はエラー
-		// ヘッダ名を抽出して比較するよう統一する
 		k, _, ok := strings.Cut(header, ":")
 		if !ok {
 			continue
@@ -339,9 +309,12 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 		s += canonical.Header(header, canonical.Canonicalization(ams.canonnAndAlgo.Header))
 	}
-	// 末尾の\r\nを削除し、再度追加して、末尾に正確に一つの\r\nがあることを保証する
+
+	// AMSヘッダ自身を追加
+	s += canonical.Header(amsSigHeader, canonical.Canonicalization(ams.canonnAndAlgo.Header))
+
+	// 末尾の\r\nを削除 (DKIM方式に統一)
 	s = strings.TrimSuffix(s, "\r\n")
-	s += "\r\n"
 
 	// 署名をbase64デコード
 	signature, err := base64Decode(ams.Signature)

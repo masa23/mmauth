@@ -314,21 +314,18 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 		}
 	}
 
-	// 署名対象のヘッダを正規化
-	var normalizedHeaders []string
-	for _, h := range headers {
-		normalizedHeaders = append(normalizedHeaders, canonical.Header(h, canonical.Canonicalization(canHeader)))
-	}
-
 	// DKIM-Signatureヘッダのb=タグの値を空文字列として扱う
-	dkimSigHeader := "DKIM-Signature: " + d.String()
-	// b=タグの値を空文字列に置き換える
-	dkimSigHeader = strings.Replace(dkimSigHeader, "b="+d.Signature, "b=", 1)
-	normalizedHeaders = append(normalizedHeaders, dkimSigHeader)
+	// RFC 6376 §3.7: DKIM-Signature itself is hashed without a trailing CRLF.
+	// StripBValueForSigning expects a raw header field line (CRLF-terminated).
+	dkimSigHeader := "DKIM-Signature: " + d.String() + "\r\n"
+	strippedHeader := dkimheader.StripBValueForSigning(dkimSigHeader)
+
+	// Build signing header set (raw), appending DKIM-Signature (with empty b=)
+	signingHeaders := append(append([]string{}, headers...), strippedHeader)
 
 	// 適切なハッシュアルゴリズムを選択
 	hashAlgo := hashAlgo(d.Algorithm)
-	signature, err := header.Signer(normalizedHeaders, key, canHeader, hashAlgo)
+	signature, err := header.SignerWithOmitLastCRLF(signingHeaders, key, canHeader, hashAlgo, true)
 	if err != nil {
 		return err
 	}

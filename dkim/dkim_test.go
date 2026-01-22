@@ -342,7 +342,7 @@ func TestSign(t *testing.T) {
 	}{
 		{
 			name:     "valid",
-			expected: "McwKSXaD2OFojyuoBVqjkzyIRb85nR/AOexdZfkny5+1PAS24JP4vJNWjjM9c3eUarqRn8r9/zc4tUgeBzWG5y0lhxii/QGEfnuQIGOdk0qXE6TKyTNqb2vKKlQEW7kdMqeLZRL41HCVvVBSctN4eiTiXfv5n0rUOIrGeMvvhbHcc4d/cm6Ikn5n3xndiAxCohCTR7h5X2AmoG4Vc2FcLOc4DEQAulW9H1INBFBlZcgzQgLQ4emmH0v1vAQdAxR7Mu2X4JZaAtIVa/LRJd37TtH+jTU5mnzJjJShmX1Rt6voWC4Qp2+Mqc5XQm3M2N+Nm7yFycKUVu7Ho/d+ayHlEQ==",
+			expected: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
 			input: &Signature{
 				Version:          1,
 				Algorithm:        SignatureAlgorithmRSA_SHA256,

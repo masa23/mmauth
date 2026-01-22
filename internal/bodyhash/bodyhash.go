@@ -17,7 +17,6 @@ type BodyHash struct {
 	hashAlgo crypto.Hash
 	w        io.WriteCloser
 	hasher   hash.Hash
-	limit    int64
 }
 
 // メール本文の書き込みを行う
@@ -47,7 +46,6 @@ func NewBodyHash(canon canonical.Canonicalization, hashAlgo crypto.Hash, limit i
 	bh := &BodyHash{
 		hashAlgo: hashAlgo,
 		hasher:   hasher,
-		limit:    limit,
 	}
 
 	// limitWriterを介してcanonicalizerに接続する

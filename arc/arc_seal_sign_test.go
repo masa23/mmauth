@@ -19,6 +19,10 @@ func TestARCSeal_Sign_ArcSetOnly(t *testing.T) {
 		// ARC Set 2
 		"ARC-Authentication-Results: i=2; spf=pass\r\n",
 		"ARC-Message-Signature: i=2; a=rsa-sha256; d=example.com; s=default; h=from:to;\r\n        bh=dummyBodyHash; b=signature2\r\n",
+		"ARC-Seal: i=2; a=rsa-sha256; t=12345; cv=none; d=example.com; s=default; b=seal2\r\n",
+		// ARC Set 3 (creating a new seal for this instance)
+		"ARC-Authentication-Results: i=3; spf=pass\r\n",
+		"ARC-Message-Signature: i=3; a=rsa-sha256; d=example.com; s=default; h=from:to;\r\n        bh=dummyBodyHash; b=signature3\r\n",
 		// Other headers that should not be signed
 		"Authentication-Results: spf=pass\r\n",
 		"DKIM-Signature: a=rsa-sha256; d=example.com; s=default; h=from:to; bh=dummyBodyHash; b=dkimSig\r\n",

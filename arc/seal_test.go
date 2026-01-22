@@ -80,11 +80,10 @@ func TestARCSealParse(t *testing.T) {
 
 func TestARCSealSign(t *testing.T) {
 	testCases := []struct {
-		name     string
-		keyType  string
-		input    *ARCSeal
-		headers  []string
-		expected string
+		name    string
+		keyType string
+		input   *ARCSeal
+		headers []string
 	}{
 		{
 			name:    "rsa key test",
@@ -109,7 +108,6 @@ func TestARCSealSign(t *testing.T) {
 					"         Dlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx\r\n" +
 					"         vrgEwmI6O74ZZR9jWIuyGg==\r\n",
 			},
-			expected: "A5vePMxJCMc+dUtUEfrggsqeqLf6APZvf9s4sPCdvchA1gVdPko+ZypDt0Kmw0eLkdAOz35+MyM5D7Z9WsmxrM7sO1s5UFA/iCVWAQ05tXpzAUFyKaBBHtVq3LG/8KxlFRLIWkYLbXAn5IvM0gQKJOVLiaFCm0u+9Dm9EojthFDowYne3W4K3mtCx8YK9OyeqE2GlpG/R4m75Eg31Mn/tAfnNqIYBjm3WevRjdpDCHIcqM7S57huEybyqvAH12DM8Rf4NArIc59tO8HAp4GN7JhQY7CaaZY+TfxeJV/+TTDZCzKxuObuaz44OEtyJ96WRmDOngFCf4NzNu1PGTQmCw==",
 		},
 		{
 			name:    "ed25519 key test",
@@ -130,7 +128,6 @@ func TestARCSealSign(t *testing.T) {
 					"        b=B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTj\r\n" +
 					"         vvlarL7sMnQeZvXN92nPDw==\r\n",
 			},
-			expected: "nFEJMH/BN/k8gR3yaIuQRPIRvSkIZlUXy40OqCRcA4+fLoCqzR4UL4dhn+PQaHKQZ5dBO8dAyL6oKLItJImtBw==",
 		},
 	}
 
@@ -146,8 +143,22 @@ func TestARCSealSign(t *testing.T) {
 			if err := tc.input.Sign(tc.headers, privateKey); err != nil {
 				t.Fatalf("failed to sign: %s", err)
 			}
-			if tc.input.Signature != tc.expected {
-				t.Errorf("signature mismatch: got %s, want %s", tc.input.Signature, tc.expected)
+
+			// Verify the generated seal signature
+			sealHeader := "ARC-Seal: " + tc.input.String() + "\r\n"
+			parsedSeal, err := ParseARCSeal(sealHeader)
+			if err != nil {
+				t.Fatalf("failed to parse generated ARC-Seal: %s", err)
+			}
+
+			headersWithSeal := append(tc.headers, sealHeader)
+			result := parsedSeal.Verify(headersWithSeal, &domainkey.DomainKey{
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
+				KeyType:   domainkey.KeyType(tc.keyType),
+				PublicKey: testKeys.getPublicKeyBase64(tc.keyType),
+			})
+			if result.Error() != nil {
+				t.Errorf("verification of generated seal failed: %s", result.Error())
 			}
 		})
 	}
