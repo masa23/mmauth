@@ -87,7 +87,7 @@ func TestParseDKIMSignature(t *testing.T) {
 		},
 		{
 			name: "valid2",
-			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; " +
 				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
 			expected: &Signature{
@@ -101,7 +101,7 @@ func TestParseDKIMSignature(t *testing.T) {
 				Headers:          "Date:From:To:Subject:Message-Id",
 				Selector:         "selector",
 				Timestamp:        1706971004,
-				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; " +
 					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
 				canonnAndAlgo: &CanonicalizationAndAlgorithm{
@@ -115,7 +115,7 @@ func TestParseDKIMSignature(t *testing.T) {
 		},
 		{
 			name: "valid3",
-			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; l=100; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; l=100; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; " +
 				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
 			expected: &Signature{
@@ -129,7 +129,7 @@ func TestParseDKIMSignature(t *testing.T) {
 				Headers:          "Date:From:To:Subject:Message-Id",
 				Selector:         "selector",
 				Timestamp:        1706971004,
-				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; l=100; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; l=100; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; " +
 					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
 				canonnAndAlgo: &CanonicalizationAndAlgorithm{
@@ -153,6 +153,111 @@ func TestParseDKIMSignature(t *testing.T) {
 			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; l=-1; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
 				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
 				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+			expectErr: true,
+		},
+		{
+			name: "missing from in h tag",
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+			expectErr: true,
+		},
+		{
+			name: "from in h tag case insensitive",
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; s=selector; t=1706971004; " +
+				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+			expected: &Signature{
+				Version:   1,
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Signature: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
+					"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:FROM:To:Subject:Message-Id",
+				Selector:         "selector",
+				Timestamp:        1706971004,
+				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; s=selector; t=1706971004; " +
+					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					Limit:     0,
+					HashAlgo:  crypto.SHA256,
+				},
+			},
+		},
+		{
+			name: "missing i tag should be completed with @domain",
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; s=selector; t=1706971004; " +
+				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+			expected: &Signature{
+				Version:   1,
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Signature: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
+					"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:FROM:To:Subject:Message-Id",
+				Selector:         "selector",
+				Timestamp:        1706971004,
+				Identity:         "@example.com", // This should be auto-completed
+				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; s=selector; t=1706971004; " +
+					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					Limit:     0,
+					HashAlgo:  crypto.SHA256,
+				},
+			},
+		},
+		{
+			name: "i tag with valid subdomain",
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; i=user@sub.example.com; s=selector; t=1706971004; " +
+				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+			expected: &Signature{
+				Version:   1,
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Signature: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
+					"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:FROM:To:Subject:Message-Id",
+				Selector:         "selector",
+				Timestamp:        1706971004,
+				Identity:         "user@sub.example.com",
+				raw: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; i=user@sub.example.com; s=selector; t=1706971004; " +
+					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					Limit:     0,
+					HashAlgo:  crypto.SHA256,
+				},
+			},
+		},
+		{
+			name: "i tag with invalid domain (not subdomain)",
+			input: "DKIM-Signature: v=1; a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:FROM:To:Subject:Message-Id; i=user@other.com; s=selector; t=1706971004; " +
+				"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+				"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+			expectErr: true,
+		},
+		{
+			name:      "duplicate tag",
+			input:     "DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; t=1609459200; c=relaxed/relaxed; bh=base64hash; i=hoge@example.com; h=from:to:subject; b=base64signature; a=rsa-sha1",
 			expectErr: true,
 		},
 	}
@@ -236,9 +341,8 @@ func TestSign(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "valid",
-			expected: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
-				"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
+			name:     "valid",
+			expected: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
 			input: &Signature{
 				Version:          1,
 				Algorithm:        SignatureAlgorithmRSA_SHA256,
@@ -422,7 +526,9 @@ func TestVerify(t *testing.T) {
 
 	for _, tc := range testCase {
 		t.Run(tc.name, func(t *testing.T) {
+			// Test Verify method
 			tc.input.Verify(tc.headers, tc.bodyHash, &tc.domainKey)
+
 			if tc.input.VerifyResult == nil {
 				t.Errorf("verifyResult is nil")
 			}
@@ -434,9 +540,40 @@ func TestVerify(t *testing.T) {
 			if tc.input.VerifyResult.Status() != tc.status {
 				t.Errorf("want %v, but got %v", tc.status, tc.input.VerifyResult.Status())
 			}
+
+			// Store the result from Verify method
+			verifyStatus := tc.input.VerifyResult.Status()
+			verifyError := tc.input.VerifyResult.Error()
+
+			// Reset VerifyResult for testing VerifyWithResolver
+			tc.input.VerifyResult = nil
+
+			// Test VerifyWithResolver method with the same inputs
+			tc.input.VerifyWithResolver(tc.headers, tc.bodyHash, &tc.domainKey, nil)
+
+			if tc.input.VerifyResult == nil {
+				t.Errorf("verifyResult is nil")
+			}
+			if tc.input.VerifyResult.Error() != nil {
+				if !tc.expectErr {
+					t.Errorf("unexpected error: %v", tc.input.VerifyResult.Error())
+				}
+			}
+			if tc.input.VerifyResult.Status() != tc.status {
+				t.Errorf("want %v, but got %v", tc.status, tc.input.VerifyResult.Status())
+			}
+
+			// Compare results between Verify and VerifyWithResolver
+			if verifyStatus != tc.input.VerifyResult.Status() {
+				t.Errorf("Verify and VerifyWithResolver returned different statuses: Verify=%v, VerifyWithResolver=%v", verifyStatus, tc.input.VerifyResult.Status())
+			}
+
+			// Both should have errors or neither should have errors
+			if (verifyError != nil) != (tc.input.VerifyResult.Error() != nil) {
+				t.Errorf("Verify and VerifyWithResolver returned different error states: Verify=%v, VerifyWithResolver=%v", verifyError, tc.input.VerifyResult.Error())
+			}
 		})
 	}
-
 }
 
 func Test_parseHeaderField(t *testing.T) {
@@ -495,6 +632,133 @@ func Test_hashAlgo(t *testing.T) {
 			got := hashAlgo(tc.input)
 			if got != tc.expect {
 				t.Errorf("unexpected result: got=%s, expect=%s", got, tc.expect)
+			}
+		})
+	}
+}
+
+func TestVerifyWithResolver(t *testing.T) {
+	block, _ := pem.Decode([]byte(testRSAPublicKey))
+	if block == nil {
+		t.Fatal("failed to decode pem")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("failed to parse pkix public key: %s", err)
+	}
+	publicKey := pub.(*rsa.PublicKey)
+	//derに変換
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		t.Fatalf("failed to marshal pkix public key: %s", err)
+	}
+
+	publicKeyB64 := base64.StdEncoding.EncodeToString(der)
+
+	// Create a mock resolver
+	mockResolver := NewMockTXTResolver()
+	mockResolver.AddRecord("selector._domainkey.example.com", "v=DKIM1; k=rsa; p="+publicKeyB64)
+
+	testCase := []struct {
+		name      string
+		bodyHash  string
+		input     *Signature
+		headers   []string
+		resolver  domainkey.TXTResolver
+		status    VerifyStatus
+		expectErr bool
+	}{
+		{
+			name:     "valid with mock resolver",
+			bodyHash: "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+			input: &Signature{
+				Version:   1,
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Signature: "kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U" +
+					"1JMaKWByXCcuh0d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA==",
+				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
+				Canonicalization: "relaxed/relaxed",
+				Domain:           "example.com",
+				Headers:          "Date:From:To:Subject:Message-Id",
+				Selector:         "selector",
+				Timestamp:        1706971004,
+				raw: "DKIM-Signature: a=rsa-sha256; bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; c=relaxed/relaxed; d=example.com; h=Date:From:To:Subject:Message-Id; s=selector; t=1706971004; v=1; " +
+					"b=kd8wPYuBn0/CA5IJccxBQx/0Hn4dHUR5t/l7yITnT9WZxxyulqecojaRQB33CsohPe8g05AImS6VBHWO83Oho7YnW19k8jel/nnXe5khlQ7Y/D2OdS/AlpZ2ad8yFSYBda1rWAoTKdMNTWm5mTnsr5jcY8U1JMaKWByXCcuh0" +
+					"d5YcXtEPmX+Hlwz/qUykrRPB3mAceuR3UNMvqQ0Q5ttKuJDYRJCO6TD/y/JI7yMEMhKGwc/9alrqh/qYzzhcJQkomNSSWcU6Ji65f67JVZKeqe8ROK5BLNDljzDQpc0Qk2xcbjugQAkLpdsJjPaAqfMNPPdKuTcDjFMjUpnyfuQYA=",
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					HashAlgo:  crypto.SHA256,
+				},
+			},
+			headers: []string{
+				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
+				"From: hogefuga@example.com\r\n",
+				"To: aaa@example.org\r\n",
+				"Subject: test\r\n",
+				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
+			},
+			resolver:  mockResolver,
+			status:    VerifyStatusPass,
+			expectErr: false,
+		},
+	}
+
+	for _, tc := range testCase {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test VerifyWithResolver method
+			tc.input.VerifyWithResolver(tc.headers, tc.bodyHash, nil, tc.resolver)
+
+			if tc.input.VerifyResult == nil {
+				t.Errorf("verifyResult is nil")
+			}
+			if tc.input.VerifyResult.Error() != nil {
+				if !tc.expectErr {
+					t.Errorf("unexpected error: %v", tc.input.VerifyResult.Error())
+				}
+			}
+			if tc.input.VerifyResult.Status() != tc.status {
+				t.Errorf("want %v, but got %v", tc.status, tc.input.VerifyResult.Status())
+			}
+
+			// Store the result from VerifyWithResolver method
+			verifyWithResolverStatus := tc.input.VerifyResult.Status()
+			verifyWithResolverError := tc.input.VerifyResult.Error()
+
+			// Reset VerifyResult for testing Verify
+			tc.input.VerifyResult = nil
+
+			// Test Verify method with the same inputs
+			// We need to create the domainKey from the resolver data for consistency
+			domainKey, err := domainkey.LookupDKIMDomainKeyWithResolver(tc.input.Selector, tc.input.Domain, mockResolver)
+			if err != nil {
+				t.Fatalf("failed to lookup domain key: %v", err)
+			}
+
+			tc.input.Verify(tc.headers, tc.bodyHash, &domainKey)
+
+			if tc.input.VerifyResult == nil {
+				t.Errorf("verifyResult is nil")
+			}
+			if tc.input.VerifyResult.Error() != nil {
+				if !tc.expectErr {
+					t.Errorf("unexpected error: %v", tc.input.VerifyResult.Error())
+				}
+			}
+			if tc.input.VerifyResult.Status() != tc.status {
+				t.Errorf("want %v, but got %v", tc.status, tc.input.VerifyResult.Status())
+			}
+
+			// Compare results between Verify and VerifyWithResolver
+			if verifyWithResolverStatus != tc.input.VerifyResult.Status() {
+				t.Errorf("Verify and VerifyWithResolver returned different statuses: Verify=%v, VerifyWithResolver=%v", tc.input.VerifyResult.Status(), verifyWithResolverStatus)
+			}
+
+			// Both should have errors or neither should have errors
+			if (verifyWithResolverError != nil) != (tc.input.VerifyResult.Error() != nil) {
+				t.Errorf("Verify and VerifyWithResolver returned different error states: Verify=%v, VerifyWithResolver=%v", tc.input.VerifyResult.Error(), verifyWithResolverError)
 			}
 		})
 	}

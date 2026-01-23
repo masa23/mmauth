@@ -44,6 +44,45 @@ func TestParseDomainKeyRecode(t *testing.T) {
 			expectedResult: DomainKey{},
 			expectedErr:    nil,
 		},
+		{
+			name:  "t flag with colon separated values",
+			input: "v=DKIM1; t=y:s; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+			expectedResult: DomainKey{
+				Version:       "DKIM1",
+				HashAlgo:      []HashAlgo{},
+				KeyType:       "",
+				PublicKey:     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+				ServiceType:   []ServiceType{},
+				SelectorFlags: []SelectorFlags{SelectorFlagsTest, SelectorFlagsStrictDomain},
+			},
+			expectedErr: nil,
+		},
+		{
+			name:  "t flag with unknown flag",
+			input: "v=DKIM1; t=y:s:unknown; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+			expectedResult: DomainKey{
+				Version:       "DKIM1",
+				HashAlgo:      []HashAlgo{},
+				KeyType:       "",
+				PublicKey:     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+				ServiceType:   []ServiceType{},
+				SelectorFlags: []SelectorFlags{SelectorFlagsTest, SelectorFlagsStrictDomain},
+			},
+			expectedErr: nil,
+		},
+		{
+			name:  "Valid ed25519 input",
+			input: "v=DKIM1; k=ed25519; p=MCowBQYDK2VwAyEAZdKSZdQcxdjw4oB9CfnK6RveEgcSFwr+5q2g5WfsDFU=",
+			expectedResult: DomainKey{
+				Version:       "DKIM1",
+				HashAlgo:      []HashAlgo{},
+				KeyType:       KeyTypeED25519,
+				PublicKey:     "MCowBQYDK2VwAyEAZdKSZdQcxdjw4oB9CfnK6RveEgcSFwr+5q2g5WfsDFU=",
+				ServiceType:   []ServiceType{},
+				SelectorFlags: []SelectorFlags{},
+			},
+			expectedErr: nil,
+		},
 	}
 
 	for _, tc := range testCases {

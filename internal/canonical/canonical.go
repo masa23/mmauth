@@ -1,6 +1,7 @@
 package canonical
 
 import (
+	"bytes"
 	"io"
 	"strings"
 )
@@ -20,6 +21,22 @@ func SimpleHeader(s string) string {
 	return s
 }
 
+// unfoldHeader はヘッダ値の折り返しを解除する関数です。
+// RFC 5322によると、ヘッダの折り返しはCRLFとそれに続く空白文字(WSP)でのみ構成されます。
+func unfoldHeader(s string) string {
+	// CRLF+WSPのシーケンスを削除（unfold）
+	for {
+		original := s
+		s = strings.ReplaceAll(s, "\r\n ", " ")
+		s = strings.ReplaceAll(s, "\r\n\t", " ")
+		// 変更がなければループを抜ける
+		if s == original {
+			break
+		}
+	}
+	return s
+}
+
 // ヘッダのリラックス正規化を行う関数です。
 func RelaxedHeader(s string) string {
 	k, v, ok := strings.Cut(s, ":")
@@ -28,9 +45,14 @@ func RelaxedHeader(s string) string {
 	}
 
 	k = strings.TrimSpace(strings.ToLower(k))
+	// 改行を削除（unfold）
+	v = unfoldHeader(v)
+	// タブとスペースを単一のスペースに圧縮
 	v = strings.Join(strings.FieldsFunc(v, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+		return r == ' ' || r == '\t'
 	}), " ")
+	// 先頭と末尾の空白を削除
+	v = strings.TrimSpace(v)
 	return k + ":" + v + crlf
 }
 
@@ -58,64 +80,47 @@ func (cf *crlfFixer) Fix(b []byte) []byte {
 
 // ヘッダの正規化を行う関数です。
 func Header(s string, canonical Canonicalization) string {
+	var result string
 	switch canonical {
 	case Simple:
-		return SimpleHeader(s)
+		result = SimpleHeader(s)
 	case Relaxed:
-		return RelaxedHeader(s)
+		result = RelaxedHeader(s)
 	default:
-		return SimpleHeader(s)
+		result = SimpleHeader(s)
 	}
+	return result
 }
 
 type simpleBodyCanonicalizer struct {
 	w         io.Writer
-	crlfBuf   []byte
+	buf       []byte
 	crlfFixer crlfFixer
 }
 
 func (c *simpleBodyCanonicalizer) Write(b []byte) (int, error) {
-	written := len(b)
-	b = append(c.crlfBuf, b...)
-
-	b = c.crlfFixer.Fix(b)
-
-	end := len(b)
-	// If it ends with \r, maybe the next write will begin with \n
-	if end > 0 && b[end-1] == '\r' {
-		end--
-	}
-	// Keep all \r\n sequences
-	for end >= 2 {
-		prev := b[end-2]
-		cur := b[end-1]
-		if prev != '\r' || cur != '\n' {
-			break
-		}
-		end -= 2
-	}
-
-	c.crlfBuf = b[end:]
-
-	var err error
-	if end > 0 {
-		_, err = c.w.Write(b[:end])
-	}
-	return written, err
+	// bufにデータを追加
+	c.buf = append(c.buf, b...)
+	return len(b), nil
 }
 
 func (c *simpleBodyCanonicalizer) Close() error {
-	// Flush crlfBuf if it ends with a single \r (without a matching \n)
-	if len(c.crlfBuf) > 0 && c.crlfBuf[len(c.crlfBuf)-1] == '\r' {
-		if _, err := c.w.Write(c.crlfBuf); err != nil {
-			return err
-		}
-	}
-	c.crlfBuf = nil
+	// CRLFを修正
+	fixed := c.crlfFixer.Fix(c.buf)
 
-	if _, err := c.w.Write([]byte(crlf)); err != nil {
+	// 末尾の空行を削除
+	for len(fixed) >= 2 && fixed[len(fixed)-2] == '\r' && fixed[len(fixed)-1] == '\n' {
+		fixed = fixed[:len(fixed)-2]
+	}
+
+	// 末尾にCRLFを追加
+	fixed = append(fixed, []byte(crlf)...)
+
+	// データを書き込む
+	if _, err := c.w.Write(fixed); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -126,52 +131,65 @@ func SimpleBody(w io.Writer) io.WriteCloser {
 
 type relaxedBodyCanonicalizer struct {
 	w         io.Writer
-	crlfBuf   []byte
-	wsp       bool
-	written   bool
+	buf       []byte
 	crlfFixer crlfFixer
 }
 
 func (c *relaxedBodyCanonicalizer) Write(b []byte) (int, error) {
-	written := len(b)
-
-	b = c.crlfFixer.Fix(b)
-
-	canonical := make([]byte, 0, len(b))
-	for _, ch := range b {
-		if ch == ' ' || ch == '\t' {
-			c.wsp = true
-		} else if ch == '\r' || ch == '\n' {
-			c.wsp = false
-			c.crlfBuf = append(c.crlfBuf, ch)
-		} else {
-			if len(c.crlfBuf) > 0 {
-				canonical = append(canonical, c.crlfBuf...)
-				c.crlfBuf = c.crlfBuf[:0]
-			}
-			if c.wsp {
-				canonical = append(canonical, ' ')
-				c.wsp = false
-			}
-
-			canonical = append(canonical, ch)
-		}
-	}
-
-	if !c.written && len(canonical) > 0 {
-		c.written = true
-	}
-
-	_, err := c.w.Write(canonical)
-	return written, err
+	// bufにデータを追加
+	c.buf = append(c.buf, b...)
+	return len(b), nil
 }
 
 func (c *relaxedBodyCanonicalizer) Close() error {
-	if c.written {
-		if _, err := c.w.Write([]byte(crlf)); err != nil {
-			return err
-		}
+	// CRLFを修正
+	fixed := c.crlfFixer.Fix(c.buf)
+
+	// バイトスライスを\r\nで分割して行のスライスを作成
+	lines := bytes.Split(fixed, []byte("\r\n"))
+
+	// 最後の空行を削除（スペースやタブのみの行も含む）
+	for len(lines) > 0 && len(bytes.TrimSpace(lines[len(lines)-1])) == 0 {
+		lines = lines[:len(lines)-1]
 	}
+
+	// 各行を処理
+	var canonical [][]byte
+	for _, line := range lines {
+		// 行末の空白を削除
+		for len(line) > 0 && (line[len(line)-1] == ' ' || line[len(line)-1] == '\t') {
+			line = line[:len(line)-1]
+		}
+
+		// 行内の連続する空白を単一のスペースに圧縮
+		var compressedLine []byte
+		wsp := false
+		for _, ch := range line {
+			if ch == ' ' || ch == '\t' {
+				if !wsp {
+					compressedLine = append(compressedLine, ' ')
+					wsp = true
+				}
+			} else {
+				compressedLine = append(compressedLine, ch)
+				wsp = false
+			}
+		}
+
+		canonical = append(canonical, compressedLine)
+	}
+
+	// 結果を結合
+	result := bytes.Join(canonical, []byte("\r\n"))
+
+	// 末尾にCRLFを追加
+	result = append(result, []byte("\r\n")...)
+
+	// データを書き込む
+	if _, err := c.w.Write(result); err != nil {
+		return err
+	}
+
 	return nil
 }
 

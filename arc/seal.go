@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"strconv"
@@ -47,6 +46,15 @@ func (as ARCSeal) String() string {
 	)
 }
 
+// StringWithoutSignature returns the ARC-Seal header string with an empty signature
+func (as ARCSeal) StringWithoutSignature() string {
+	return fmt.Sprintf("i=%d; a=%s; t=%d; cv=%s;\r\n"+
+		"        d=%s; s=%s;\r\n"+
+		"        b=",
+		as.InstanceNumber, as.Algorithm, as.Timestamp, as.ChainValidation, as.Domain, as.Selector,
+	)
+}
+
 // ARC-Seal のパース
 func ParseARCSeal(s string) (*ARCSeal, error) {
 	result := &ARCSeal{}
@@ -68,6 +76,17 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 
 		key := strings.TrimSpace(keyValue[0])
 		value := header.StripWhiteSpace(keyValue[1])
+
+		// Check for forbidden tags according to RFC 8617 Section 4.1.3
+		// "Note especially that the DKIM "h" tag is NOT allowed and, if found, MUST result in a cv status of "fail""
+		// Also, the "bh" tag is not allowed as ARC-Seal signatures don't cover the message body.
+		// RFC 8617: ARC-Seal に h= は NOT allowed, 見つけたら cv=fail
+		// Normalize key to lowercase for comparison to catch case-insensitive matches
+		if strings.ToLower(key) == "h" || strings.ToLower(key) == "bh" {
+			result.ChainValidation = ChainValidationResultFail
+			// エラーを返さずに、パースを継続
+			continue
+		}
 
 		switch key {
 		case "i":
@@ -132,8 +151,46 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 		}
 	}
 
-	headers = append(headers, "ARC-Seal: "+as.String())
-	signature, err := header.Signer(headers, key, canonical.Relaxed)
+	// ハッシュアルゴリズムを設定
+	as.hashAlgo = hashAlgo(as.Algorithm)
+	// 署名対象ヘッダを構築する（RFC 8617: i=N の ARC-Seal は、i=1..N-1 の AAR/AMS/AS と、i=N の AAR/AMS と、b= を空にした AS(N) を署名する）
+	extractedHeaders := header.ExtractHeadersAll(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
+
+	// 既存のARCヘッダをパースして、署名対象の順序で並べ替える
+	ah, err := parseARCHeaders(extractedHeaders)
+	if err != nil {
+		return err
+	}
+
+	var sortedHeaders []string
+	for i := 1; i < as.InstanceNumber; i++ {
+		arc := ah.getInstance(i)
+		// 既存インスタンスは AAR/AMS/AS が揃っている必要がある
+		if arc.arcAuthenticationResults == nil || arc.arcMessageSignature == nil || arc.arcSeal == nil {
+			return fmt.Errorf("missing ARC headers for instance %d", i)
+		}
+		sortedHeaders = append(sortedHeaders, arc.arcAuthenticationResults.raw)
+		sortedHeaders = append(sortedHeaders, arc.arcMessageSignature.raw)
+		sortedHeaders = append(sortedHeaders, arc.arcSeal.raw)
+	}
+
+	// 現在インスタンスは AAR/AMS が必須（AS は placeholder を使う）
+	cur := ah.getInstance(as.InstanceNumber)
+	if cur.arcAuthenticationResults == nil || cur.arcMessageSignature == nil {
+		return fmt.Errorf("missing ARC headers for instance %d", as.InstanceNumber)
+	}
+	sortedHeaders = append(sortedHeaders, cur.arcAuthenticationResults.raw)
+	sortedHeaders = append(sortedHeaders, cur.arcMessageSignature.raw)
+
+	// 自分の ARC-Seal を署名対象に含める際は、b= を空にした placeholder を追加
+	placeholder := "ARC-Seal: " + as.StringWithoutSignature() + "\r\n"
+	sortedHeaders = append(sortedHeaders, placeholder)
+
+	// RFC 5322 header fields are terminated with CRLF. Ensure the signature header
+	// we add to the signing set is also CRLF-terminated so header canonicalization
+	// behaves consistently (especially for simple header canonicalization).
+	// RFC 6376 §3.7 (applied by ARC): the signature header field itself is hashed without a trailing CRLF.
+	signature, err := header.SignerWithOmitLastCRLF(sortedHeaders, key, canonical.Canonicalization(canonical.Relaxed), as.hashAlgo, true)
 	if err != nil {
 		return err
 	}
@@ -143,6 +200,16 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 
 // ARC-Seal の検証
 func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *VerifyResult {
+	// cv=fail の場合は即座に fail を返す
+	if as.ChainValidation == ChainValidationResultFail {
+		return &VerifyResult{
+			status:    VerifyStatusFail,
+			err:       fmt.Errorf("chain validation result is fail"),
+			msg:       "chain validation result is fail",
+			domainKey: domainKey,
+		}
+	}
+
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
 		domKey, err := domainkey.LookupARCDomainKey(as.Selector, as.Domain)
@@ -210,7 +277,7 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 
 	// 公開鍵をパース
-	pub, err := x509.ParsePKIXPublicKey(decoded)
+	pub, err := domainkey.ParseDKIMPublicKey(decoded, domainKey.KeyType)
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
@@ -225,7 +292,7 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 		if err := rsa.VerifyPKCS1v15(pub, as.hashAlgo, hash.Sum(nil), signature); err != nil {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
-				err:       fmt.Errorf("failed to verify arc-seal signature: %v", err),
+				err:       fmt.Errorf("failed to verify arc-seal signature"),
 				msg:       "invalid signature",
 				domainKey: domainKey,
 			}
@@ -234,7 +301,7 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 		if !ed25519.Verify(pub, hash.Sum(nil), signature) {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
-				err:       fmt.Errorf("failed to verify arc-seal signature: %v", err),
+				err:       fmt.Errorf("failed to verify arc-seal signature"),
 				msg:       "invalid signature",
 				domainKey: domainKey,
 			}

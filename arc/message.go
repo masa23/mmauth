@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/internal/dkimheader"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -136,11 +136,24 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 
 // ARC-Message-Signature の署名
 func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error {
-	// headersのヘッダ名を抽出する
+	// RFC 8617で禁止されるヘッダを定義
+	forbiddenHeaders := map[string]bool{
+		"authentication-results":     true,
+		"arc-authentication-results": true,
+		"arc-message-signature":      true,
+		"arc-seal":                   true,
+	}
+
+	// headersのヘッダ名を抽出し、禁止ヘッダを除外
 	var h []string
 	for _, header := range headers {
 		k, _, ok := strings.Cut(header, ":")
 		if !ok {
+			continue
+		}
+		// 小文字に正規化して比較
+		lowerK := strings.ToLower(strings.TrimSpace(k))
+		if forbiddenHeaders[lowerK] {
 			continue
 		}
 		h = append(h, k)
@@ -164,12 +177,35 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 	}
 
 	ams.Headers = strings.Join(h, ":")
+
 	// timestampを設定
 	if ams.Timestamp == 0 {
 		ams.Timestamp = time.Now().Unix()
 	}
-	headers = append(headers, "ARC-Message-Signature: "+ams.String())
-	signature, err := header.Signer(headers, key, canHeader)
+
+	// ams.canonnAndAlgo が未初期化の場合に初期化処理を追加
+	if ams.canonnAndAlgo == nil {
+		canHeaderCanon, canBodyCanon, err := header.ParseHeaderCanonicalization(ams.Canonicalization)
+		if err != nil {
+			return fmt.Errorf("failed to parse canonicalization: %w", err)
+		}
+		ams.canonnAndAlgo = &CanonicalizationAndAlgorithm{
+			Header:    Canonicalization(canHeaderCanon),
+			Body:      Canonicalization(canBodyCanon),
+			Algorithm: ams.Algorithm,
+			HashAlgo:  hashAlgo(ams.Algorithm),
+		}
+	}
+
+	// h= タグに指定されたヘッダ名の順序でヘッダを抽出 (DKIM方式に統一)
+	signingHeaders := header.ExtractHeadersDKIM(headers, strings.Split(ams.Headers, ":"))
+
+	// AMSヘッダ自身を署名対象に追加 (b=値を空にしてcanonicalize)
+	amsSigHeader := dkimheader.StripBValueForSigning("ARC-Message-Signature: " + ams.String() + "\r\n")
+	signingHeaders = append(signingHeaders, amsSigHeader)
+
+	// RFC 6376 §3.7: the signature header field itself is hashed without a trailing CRLF.
+	signature, err := header.SignerWithOmitLastCRLF(signingHeaders, key, canonical.Canonicalization(canHeader), ams.canonnAndAlgo.HashAlgo, true)
 	if err != nil {
 		return err
 	}
@@ -179,6 +215,25 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 
 // ARC-Message-Signature の検証
 func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domainKey *domainkey.DomainKey) *VerifyResult {
+	// h= に含まれてはいけないヘッダをチェック
+	forbiddenHeaders := map[string]bool{
+		"authentication-results":     true,
+		"arc-authentication-results": true,
+		"arc-message-signature":      true,
+		"arc-seal":                   true,
+	}
+
+	for _, headerName := range strings.Split(ams.Headers, ":") {
+		normalized := strings.ToLower(strings.TrimSpace(headerName))
+		if forbiddenHeaders[normalized] {
+			return &VerifyResult{
+				status: VerifyStatusPermErr,
+				err:    fmt.Errorf("ARC-Message-Signature header field contains forbidden header: %s", normalized),
+				msg:    fmt.Sprintf("forbidden header %s found in h= tag", normalized),
+			}
+		}
+	}
+
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
 		domKey, err := domainkey.LookupARCDomainKey(ams.Selector, ams.Domain)
@@ -217,15 +272,34 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 	}
 
-	// ヘッダの抽出と連結
-	h := header.ExtractHeadersARC(headers, strings.Split(ams.Headers, ":"))
-	h = append(h, header.DeleteSignature(ams.raw))
+	// h= タグに指定されたヘッダ名の順序でヘッダを抽出
+	// AMS自身をh=抽出から除外するために、AMSをヘッダリストから削除
+	headersWithoutAMS := make([]string, 0, len(headers))
+	for _, header := range headers {
+		k, _, ok := strings.Cut(header, ":")
+		if !ok {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(k), "ARC-Message-Signature") {
+			headersWithoutAMS = append(headersWithoutAMS, header)
+		}
+	}
+
+	// h= タグに指定されたヘッダ名の順序でヘッダを抽出 (DKIM方式に統一)
+	h := header.ExtractHeadersDKIM(headersWithoutAMS, strings.Split(ams.Headers, ":"))
+
+	// ARC-Message-Signatureヘッダ自身を署名対象に追加 (b=値を空にしてcanonicalize)
+	amsSigHeader := dkimheader.StripBValueForSigning(ams.Raw())
 
 	// ヘッダの正規化
 	var s string
 	for _, header := range h {
 		// h=ARC-Sealがある場合はエラー
-		if strings.EqualFold(header, "ARC-Seal") {
+		k, _, ok := strings.Cut(header, ":")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(k), "ARC-Seal") {
 			return &VerifyResult{
 				status:    VerifyStatusPermErr,
 				err:       fmt.Errorf("ARC-Message-Signature header field contains ARC-Seal"),
@@ -235,6 +309,11 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 		s += canonical.Header(header, canonical.Canonicalization(ams.canonnAndAlgo.Header))
 	}
+
+	// AMSヘッダ自身を追加
+	s += canonical.Header(amsSigHeader, canonical.Canonicalization(ams.canonnAndAlgo.Header))
+
+	// 末尾の\r\nを削除 (DKIM方式に統一)
 	s = strings.TrimSuffix(s, "\r\n")
 
 	// 署名をbase64デコード
@@ -264,7 +343,8 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	}
 
 	// 公開鍵をパース
-	pub, err := x509.ParsePKIXPublicKey(decoded)
+	// RFC 8463: ed25519 public key is raw 32-octet key, not PKIX
+	pub, err := domainkey.ParseDKIMPublicKey(decoded, domainKey.KeyType)
 	if err != nil {
 		return &VerifyResult{
 			status:    VerifyStatusPermErr,
@@ -290,7 +370,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		if !ed25519.Verify(pub, hash.Sum(nil), signature) {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
-				err:       fmt.Errorf("fail	to verify arc-message-signature signature: %v", err),
+				err:       fmt.Errorf("failed to verify arc-message-signature signature"),
 				msg:       "invalid signature",
 				domainKey: domainKey,
 			}

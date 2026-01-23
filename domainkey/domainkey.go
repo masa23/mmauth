@@ -1,16 +1,48 @@
 package domainkey
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
 
 type TXTLookupFunc func(name string) ([]string, error)
 
+// TXTResolver is an interface for DNS TXT record lookups.
+type TXTResolver interface {
+	// LookupTXT performs a DNS TXT record lookup for the given name.
+	LookupTXT(ctx context.Context, name string) ([]string, error)
+}
+
+// defaultTXTResolver is the default implementation of TXTResolver using net.Resolver.
+type defaultTXTResolver struct {
+	resolver *net.Resolver
+}
+
+// NewDefaultTXTResolver creates a new default TXTResolver.
+func NewDefaultTXTResolver() TXTResolver {
+	return &defaultTXTResolver{
+		resolver: net.DefaultResolver,
+	}
+}
+
+// LookupTXT performs a DNS TXT record lookup using the default system resolver.
+func (r *defaultTXTResolver) LookupTXT(ctx context.Context, name string) ([]string, error) {
+	return r.resolver.LookupTXT(ctx, name)
+}
+
 // DefaultResolver is the default TXT lookup function.
-var DefaultResolver TXTLookupFunc = net.LookupTXT
+var DefaultResolver TXTLookupFunc = func(name string) ([]string, error) {
+	// 5秒のタイムアウトを設定
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolver := NewDefaultTXTResolver()
+	return resolver.LookupTXT(ctx, name)
+}
 
 var (
 	ErrNoRecordFound        = errors.New("no record found")
@@ -88,6 +120,15 @@ func (d *DomainKey) IsService(service ServiceType) bool {
 	return false
 }
 
+// isKeyRevoked checks if a domain key has been revoked.
+// A key is considered revoked if the record contains "p=" but the parsed PublicKey is empty.
+func isKeyRevoked(record string, domainKey DomainKey) error {
+	if strings.Contains(record, "p=") && domainKey.PublicKey == "" {
+		return fmt.Errorf("key revoked: %w", ErrNoRecordFound)
+	}
+	return nil
+}
+
 // LookupDKIMDomainKey DKIMのドメインキーをLookupする
 // versionがDKIM1でない場合はエラーを返す
 func LookupDKIMDomainKey(selector, domain string) (DomainKey, error) {
@@ -95,7 +136,21 @@ func LookupDKIMDomainKey(selector, domain string) (DomainKey, error) {
 	if err != nil {
 		return DomainKey{}, err
 	}
-	if d.Version != "DKIM1" {
+	if d.Version != "" && d.Version != "DKIM1" {
+		return DomainKey{}, ErrInvalidVersion
+	}
+	return d, nil
+}
+
+// LookupDKIMDomainKeyWithResolver DKIMのドメインキーをLookupする
+// versionがDKIM1でない場合はエラーを返す
+// resolverがnilの場合はデフォルトのリゾルバーを使用
+func LookupDKIMDomainKeyWithResolver(selector, domain string, resolver TXTResolver) (DomainKey, error) {
+	d, err := lookupDomainKeyWithResolver(selector, domain, resolver)
+	if err != nil {
+		return DomainKey{}, err
+	}
+	if d.Version != "" && d.Version != "DKIM1" {
 		return DomainKey{}, ErrInvalidVersion
 	}
 	return d, nil
@@ -127,6 +182,70 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 		if domainKey.PublicKey != "" {
 			return domainKey, nil
 		}
+		// p=が空の場合はキーが撤回されたとみなす
+		if err := isKeyRevoked(r, domainKey); err != nil {
+			return DomainKey{}, err
+		}
+	}
+	return DomainKey{}, ErrNoRecordFound
+}
+
+// lookupDomainKeyWithResolver
+func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) (DomainKey, error) {
+	query := fmt.Sprintf("%s._domainkey.%s", selector, domain)
+
+	// If resolver is nil, use the default resolver
+	if resolver == nil {
+		res, err := DefaultResolver(query)
+		if dnsErr, ok := err.(*net.DNSError); ok {
+			if dnsErr.IsNotFound {
+				return DomainKey{}, ErrNoRecordFound
+			}
+		} else if err != nil {
+			return DomainKey{}, ErrDNSLookupFailed
+		}
+		// レコードの解析
+		for _, r := range res {
+			domainKey, err := ParseDomainKeyRecode(r)
+			if err != nil {
+				return DomainKey{}, err
+			}
+			if domainKey.PublicKey != "" {
+				return domainKey, nil
+			}
+			// p=が空の場合はキーが撤回されたとみなす
+			if err := isKeyRevoked(r, domainKey); err != nil {
+				return DomainKey{}, err
+			}
+		}
+		return DomainKey{}, ErrNoRecordFound
+	}
+
+	// Use the provided resolver
+	// 5秒のタイムアウトを設定
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	res, err := resolver.LookupTXT(ctx, query)
+	if dnsErr, ok := err.(*net.DNSError); ok {
+		if dnsErr.IsNotFound {
+			return DomainKey{}, ErrNoRecordFound
+		}
+	} else if err != nil {
+		return DomainKey{}, ErrDNSLookupFailed
+	}
+	// レコードの解析
+	for _, r := range res {
+		domainKey, err := ParseDomainKeyRecode(r)
+		if err != nil {
+			return DomainKey{}, err
+		}
+		if domainKey.PublicKey != "" {
+			return domainKey, nil
+		}
+		// p=が空の場合はキーが撤回されたとみなす
+		if err := isKeyRevoked(r, domainKey); err != nil {
+			return DomainKey{}, err
+		}
 	}
 	return DomainKey{}, ErrNoRecordFound
 }
@@ -139,14 +258,18 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 	pairs := strings.Split(r, ";")
 	for _, pair := range pairs {
 		k, v, _ := strings.Cut(pair, "=")
-		switch strings.ToLower(strings.TrimSpace(k)) {
+		// 値の前後の空白をトリム
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		switch strings.ToLower(k) {
 		case "v":
 			key.Version = v
 			continue
 		case "h":
 			algos := strings.Split(v, ":")
 			for _, algo := range algos {
-				switch HashAlgo(algo) {
+				trimmedAlgo := strings.TrimSpace(algo)
+				switch HashAlgo(trimmedAlgo) {
 				case HashAlgoSHA1:
 					key.HashAlgo = append(key.HashAlgo, HashAlgoSHA1)
 				case HashAlgoSHA256:
@@ -158,7 +281,8 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 		case "k":
 			keyTypes := strings.Split(v, ":")
 			for _, keyType := range keyTypes {
-				switch KeyType(keyType) {
+				trimmedKeyType := strings.TrimSpace(keyType)
+				switch KeyType(trimmedKeyType) {
 				case KeyTypeRSA:
 					key.KeyType = KeyTypeRSA
 				case KeyTypeED25519:
@@ -170,11 +294,13 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 		case "n":
 			key.Notes = v
 		case "p":
-			key.PublicKey = v
+			// 空白を削除して格納
+			key.PublicKey = strings.ReplaceAll(v, " ", "")
 		case "s":
 			serviceTypes := strings.Split(v, ":")
 			for _, serviceType := range serviceTypes {
-				switch ServiceType(serviceType) {
+				trimmedServiceType := strings.TrimSpace(serviceType)
+				switch ServiceType(trimmedServiceType) {
 				case ServiceTypeEmail:
 					key.ServiceType = append(key.ServiceType, ServiceTypeEmail)
 				case ServiceTypeAll:
@@ -184,13 +310,20 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 				}
 			}
 		case "t":
-			switch SelectorFlags(v) {
-			case SelectorFlagsTest:
-				key.SelectorFlags = append(key.SelectorFlags, SelectorFlagsTest)
-			case SelectorFlagsStrictDomain:
-				key.SelectorFlags = append(key.SelectorFlags, SelectorFlagsStrictDomain)
-			default:
-				return DomainKey{}, ErrInvalidSelectorFlags
+			// t=タグはコロン区切りの複数フラグを許容する
+			flags := strings.Split(v, ":")
+			for _, flag := range flags {
+				trimmedFlag := strings.TrimSpace(flag)
+				switch SelectorFlags(trimmedFlag) {
+				case SelectorFlagsTest:
+					key.SelectorFlags = append(key.SelectorFlags, SelectorFlagsTest)
+				case SelectorFlagsStrictDomain:
+					key.SelectorFlags = append(key.SelectorFlags, SelectorFlagsStrictDomain)
+				// 未知のフラグは無視する（将来拡張に対応）
+				default:
+					// 未知のフラグはエラーにせず、単に無視する
+					// return DomainKey{}, ErrInvalidSelectorFlags
+				}
 			}
 		}
 	}

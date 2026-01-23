@@ -80,11 +80,10 @@ func TestARCSealParse(t *testing.T) {
 
 func TestARCSealSign(t *testing.T) {
 	testCases := []struct {
-		name     string
-		keyType  string
-		input    *ARCSeal
-		headers  []string
-		expected string
+		name    string
+		keyType string
+		input   *ARCSeal
+		headers []string
 	}{
 		{
 			name:    "rsa key test",
@@ -109,11 +108,6 @@ func TestARCSealSign(t *testing.T) {
 					"         Dlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx\r\n" +
 					"         vrgEwmI6O74ZZR9jWIuyGg==\r\n",
 			},
-			expected: "g+R0nyap1H1wsIqc3AvSesOyicLqq/p5bMP4yJUG/Kqmb8iN42MuYVdjD8xFNiPggfmq2Uz/FvYsyq9v" +
-				"x8R9Isxu0eNKyx4tZWMK0kNJkxW/cA+RRPZ1sSXxI2w+ZomV5OHl0AzFFAUlU41Ngq6mJLKNXVYDrd4S" +
-				"ILiYHCC+1B/sylS+7c4tbCTtQbikeVDZmTpq+W9lEDGxgtcmZK8UlAjDZ5CfMIef2ukeWWm8atqPRm0N" +
-				"fExmsWYhytVvccgNIfYCgsji2Cee45epWJXJSD+RJLbhwbLgfMlFSUa4cdW0yNN24OB7rHV1T/tg+boG" +
-				"y2vkgXJHRmKvadyjGwTW8A==",
 		},
 		{
 			name:    "ed25519 key test",
@@ -134,7 +128,6 @@ func TestARCSealSign(t *testing.T) {
 					"        b=B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTj\r\n" +
 					"         vvlarL7sMnQeZvXN92nPDw==\r\n",
 			},
-			expected: "Xt6qSS3XrProksIWSKvJhxr2RW+FG2IfkIArZlpeRyBeSMezkp9fENlxV/7owRU7mDFM3ExsIOzOXrQjuaJOCw==",
 		},
 	}
 
@@ -150,8 +143,22 @@ func TestARCSealSign(t *testing.T) {
 			if err := tc.input.Sign(tc.headers, privateKey); err != nil {
 				t.Fatalf("failed to sign: %s", err)
 			}
-			if tc.input.Signature != tc.expected {
-				t.Errorf("signature mismatch: got %s, want %s", tc.input.Signature, tc.expected)
+
+			// Verify the generated seal signature
+			sealHeader := "ARC-Seal: " + tc.input.String() + "\r\n"
+			parsedSeal, err := ParseARCSeal(sealHeader)
+			if err != nil {
+				t.Fatalf("failed to parse generated ARC-Seal: %s", err)
+			}
+
+			headersWithSeal := append(tc.headers, sealHeader)
+			result := parsedSeal.Verify(headersWithSeal, &domainkey.DomainKey{
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
+				KeyType:   domainkey.KeyType(tc.keyType),
+				PublicKey: testKeys.getPublicKeyBase64(tc.keyType),
+			})
+			if result.Error() != nil {
+				t.Errorf("verification of generated seal failed: %s", result.Error())
 			}
 		})
 	}

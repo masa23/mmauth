@@ -182,3 +182,47 @@ func Test_hashAlgo(t *testing.T) {
 		})
 	}
 }
+
+func TestParseARCSealForbiddenTag(t *testing.T) {
+	testCases := []struct {
+		name      string
+		input     string
+		expectCV  ChainValidationResult
+		expectErr bool
+	}{
+		{
+			name:      "forbidden h tag",
+			input:     "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=fail; d=example.com; s=selector; h=from:to; b=signature",
+			expectCV:  ChainValidationResultFail,
+			expectErr: false, // RFC 8617 Section 3.5: h= tag is forbidden in ARC-Seal, but we should not return an error
+		},
+		{
+			name:      "forbidden bh tag",
+			input:     "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=fail; d=example.com; s=selector; bh=bodyhash; b=signature",
+			expectCV:  ChainValidationResultFail,
+			expectErr: false, // RFC 8617 Section 3.5: bh= tag is forbidden in ARC-Seal, but we should not return an error
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			seal, err := ParseARCSeal(tc.input)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, but got nil")
+				}
+				// Verify that ChainValidation is also set to Fail when an error occurs due to forbidden tags
+				if seal != nil && seal.ChainValidation != ChainValidationResultFail {
+					t.Errorf("expected ChainValidation to be Fail when error occurs, but got %v", seal.ChainValidation)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if seal.ChainValidation != tc.expectCV {
+				t.Errorf("want %v, but got %v", tc.expectCV, seal.ChainValidation)
+			}
+		})
+	}
+}

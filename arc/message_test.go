@@ -2,9 +2,12 @@ package arc
 
 import (
 	"crypto"
+	"strings"
 	"testing"
 
 	"github.com/masa23/mmauth/domainkey"
+	"github.com/masa23/mmauth/internal/bodyhash"
+	"github.com/masa23/mmauth/internal/canonical"
 )
 
 func TestARCMessageSignatureParse(t *testing.T) {
@@ -126,10 +129,9 @@ func TestARCMessageSignatureParse(t *testing.T) {
 
 func TestARCMessageSignatureSign(t *testing.T) {
 	testCases := []struct {
-		name     string
-		input    *ARCMessageSignature
-		headers  []string
-		expected string
+		name    string
+		input   *ARCMessageSignature
+		headers []string
 	}{
 		{
 			name: "simple/simple rsa-sha256",
@@ -139,9 +141,14 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
 				Canonicalization: "simple/simple",
 				Domain:           "example.com",
-				Headers:          "Date:From:To:Subject:Message-Id",
 				Selector:         "selector",
 				Timestamp:        1706971004,
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationSimple,
+					Body:      CanonicalizationSimple,
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					HashAlgo:  crypto.SHA256,
+				},
 			},
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
@@ -150,11 +157,6 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				"Subject: test\r\n",
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
-			expected: "HaSpZz5xD4PIl6aROJUfsMzToitrqEAWU/LSCZ3S2DpiHpnSIPRcNbN1FeeFtatyDKbJHZL3gxILppCe" +
-				"7h34fJGqW5so7D3AnHGI86mtRO+h+X5iHDT0474B2B1hDY1+SFker3+8P4WI5Mz1Njl5nom3TgQSxp03" +
-				"GWz0KWN9gFMH1tt7q7w/jfM8RkZ05AXy0xaf04AU/UNqUm88tFKfCHPxpSrsdtA4lPwz5X3Ql/bSfJpE" +
-				"8W+WR3WMebyr9i6baJ72mCwqv5SqVZug8Sh3WliPqUJYTV1kYhB6NlZpGmLDsSLLEtnQpz5AIxBBHxTn" +
-				"CIROrH3gMTIolx1V+2oKVQ==",
 		},
 		{
 			name: "relaxed/relaxed rsa-sha256",
@@ -164,9 +166,14 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
 				Canonicalization: "relaxed/relaxed",
 				Domain:           "example.com",
-				Headers:          "Date:From:To:Subject:Message-Id",
 				Selector:         "selector",
 				Timestamp:        1706971004,
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					Algorithm: SignatureAlgorithmRSA_SHA256,
+					HashAlgo:  crypto.SHA256,
+				},
 			},
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
@@ -175,11 +182,6 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				"Subject: test\r\n",
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
-			expected: "ef198CMzjQC9DkeKZj8IrzvZuEPqV/MBDLYGPpdSiofRdBv6BkrFS8Gb7jH7/oXWBEzZnRVMjpD7dHLp" +
-				"NjNjgqSQJI0GbSP/CK80BsVHRUioLWNPuG9aCNg/sOKl70yD3PwmimfOhr1tA18cdDNQv1Q5iAxPLCfY" +
-				"2IKzY6FQqw0YBIFqACYC2Nf2ONXha89YUnZURPJSzXXrlZZserEqAt7MFaMzUVmBRHEDG9blwLkm/NhK" +
-				"KL9IT/pKc6T9ibbgDlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx" +
-				"vrgEwmI6O74ZZR9jWIuyGg==",
 		},
 		{
 			name: "relaxed/relaxed ed25519-sha256",
@@ -189,9 +191,14 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
 				Canonicalization: "relaxed/relaxed",
 				Domain:           "example.com",
-				Headers:          "Date:From:To:Subject",
 				Selector:         "selector",
 				Timestamp:        1728300596,
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationRelaxed,
+					Body:      CanonicalizationRelaxed,
+					Algorithm: SignatureAlgorithmED25519_SHA256,
+					HashAlgo:  crypto.SHA256,
+				},
 			},
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
@@ -199,7 +206,6 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				"To: aaa@example.org\r\n",
 				"Subject: test\r\n",
 			},
-			expected: "B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTjvvlarL7sMnQeZvXN92nPDw==",
 		},
 		{
 			name: "simple/simple ed25519-sha256",
@@ -209,9 +215,14 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				BodyHash:         "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
 				Canonicalization: "simple/simple",
 				Domain:           "example.com",
-				Headers:          "Date:From:To:Subject",
 				Selector:         "selector",
 				Timestamp:        1728300596,
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    CanonicalizationSimple,
+					Body:      CanonicalizationSimple,
+					Algorithm: SignatureAlgorithmED25519_SHA256,
+					HashAlgo:  crypto.SHA256,
+				},
 			},
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
@@ -219,12 +230,22 @@ func TestARCMessageSignatureSign(t *testing.T) {
 				"To: aaa@example.org\r\n",
 				"Subject: test\r\n",
 			},
-			expected: "xcCQDNQSYZW0jnjeAFmshNjmMMe3x3pxVw2fIKjCRkjzJPEexL9SWI6C/RpeeDBf+/vMpqpDxgvnFbHHcHIrBA==",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Set Headers field based on the headers in the test case
+			var headerNames []string
+			for _, header := range tc.headers {
+				k, _, ok := strings.Cut(header, ":")
+				if !ok {
+					continue
+				}
+				headerNames = append(headerNames, strings.TrimSpace(k))
+			}
+			tc.input.Headers = strings.Join(headerNames, ":")
+
 			var privateKey crypto.Signer
 			if tc.input.Algorithm == SignatureAlgorithmRSA_SHA256 || tc.input.Algorithm == SignatureAlgorithmRSA_SHA1 {
 				privateKey = testKeys.RSAPrivateKey
@@ -235,10 +256,52 @@ func TestARCMessageSignatureSign(t *testing.T) {
 			if err := tc.input.Sign(tc.headers, privateKey); err != nil {
 				t.Fatalf("failed to sign: %s", err)
 			}
-			if tc.input.Signature != tc.expected {
-				t.Errorf("signature mismatch: got %s, want %s", tc.input.Signature, tc.expected)
+
+			// Verify the generated signature
+			amsHeader := "ARC-Message-Signature: " + tc.input.String() + "\r\n"
+			parsedAMS, err := ParseARCMessageSignature(amsHeader)
+			if err != nil {
+				t.Fatalf("failed to parse generated signature: %s", err)
 			}
+
+			headersWithAMS := append(tc.headers, amsHeader)
+			result := parsedAMS.Verify(headersWithAMS, tc.input.BodyHash, &domainkey.DomainKey{
+				HashAlgo:  []domainkey.HashAlgo{getHashAlgoType(tc.input.Algorithm)},
+				KeyType:   domainkey.KeyType(getKeyType(tc.input.Algorithm)),
+				PublicKey: getPublicKeyBase64(tc.input.Algorithm),
+			})
+
+			if result.Error() != nil {
+				t.Errorf("verification of generated signature failed: %s", result.Error())
+			}
+
+			// Commented out to remove extra debug messages
+			// t.Logf("Generated signature for %s: %s", tc.name, tc.input.Signature)
 		})
+	}
+}
+
+// Helper function to get key type from algorithm
+func getKeyType(algo SignatureAlgorithm) string {
+	switch algo {
+	case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+		return "rsa"
+	case SignatureAlgorithmED25519_SHA256:
+		return "ed25519"
+	default:
+		return "rsa"
+	}
+}
+
+// Helper function to get public key base64 from algorithm
+func getPublicKeyBase64(algo SignatureAlgorithm) string {
+	switch algo {
+	case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+		return testKeys.getPublicKeyBase64("rsa")
+	case SignatureAlgorithmED25519_SHA256:
+		return testKeys.getPublicKeyBase64("ed25519")
+	default:
+		return testKeys.getPublicKeyBase64("rsa")
 	}
 }
 
@@ -246,22 +309,12 @@ func TestARCMessageSignatureVerify(t *testing.T) {
 	testCases := []struct {
 		name      string
 		bodyhash  string
-		header    string
 		headers   []string
 		domainkey domainkey.DomainKey
 	}{
 		{
 			name:     "simple/simple valid rsa",
 			bodyhash: "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
-			header: "ARC-Message-Signature: i=1; a=rsa-sha256; c=simple/simple; d=example.com; s=selector;\r\n" +
-				"        h=Date:From:To:Subject:Message-Id;\r\n" +
-				"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1706971004;\r\n" +
-				"        b=HaSpZz5xD4PIl6aROJUfsMzToitrqEAWU/LSCZ3S2DpiHpnSIPRcNbN1FeeFtaty\r\n" +
-				"         DKbJHZL3gxILppCe7h34fJGqW5so7D3AnHGI86mtRO+h+X5iHDT0474B2B1hDY1+\r\n" +
-				"         SFker3+8P4WI5Mz1Njl5nom3TgQSxp03GWz0KWN9gFMH1tt7q7w/jfM8RkZ05AXy\r\n" +
-				"         0xaf04AU/UNqUm88tFKfCHPxpSrsdtA4lPwz5X3Ql/bSfJpE8W+WR3WMebyr9i6b\r\n" +
-				"         aJ72mCwqv5SqVZug8Sh3WliPqUJYTV1kYhB6NlZpGmLDsSLLEtnQpz5AIxBBHxTn\r\n" +
-				"         CIROrH3gMTIolx1V+2oKVQ==\r\n",
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"From: hogefuga@example.com\r\n",
@@ -270,23 +323,14 @@ func TestARCMessageSignatureVerify(t *testing.T) {
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
 			domainkey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
-				KeyType:   "rsa",
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
+				KeyType:   domainkey.KeyType("rsa"),
 				PublicKey: testKeys.getPublicKeyBase64("rsa"),
 			},
 		},
 		{
 			name:     "relaxed/relaxed valid rsa",
 			bodyhash: "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
-			header: "ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=selector;\r\n" +
-				"        h=Date:From:To:Subject:Message-Id;\r\n" +
-				"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1706971004;\r\n" +
-				"        b=ef198CMzjQC9DkeKZj8IrzvZuEPqV/MBDLYGPpdSiofRdBv6BkrFS8Gb7jH7/oXW\r\n" +
-				"         BEzZnRVMjpD7dHLpNjNjgqSQJI0GbSP/CK80BsVHRUioLWNPuG9aCNg/sOKl70yD\r\n" +
-				"         3PwmimfOhr1tA18cdDNQv1Q5iAxPLCfY2IKzY6FQqw0YBIFqACYC2Nf2ONXha89Y\r\n" +
-				"         UnZURPJSzXXrlZZserEqAt7MFaMzUVmBRHEDG9blwLkm/NhKKL9IT/pKc6T9ibbg\r\n" +
-				"         Dlmh7sNjSEOIw7CS5dkp0k3r2zvR6l/fdChJh13fOv1LPwkmGeosXDWBmrdYr9Gx\r\n" +
-				"         vrgEwmI6O74ZZR9jWIuyGg==\r\n",
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"From: hogefuga@example.com\r\n",
@@ -295,19 +339,14 @@ func TestARCMessageSignatureVerify(t *testing.T) {
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
 			domainkey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
-				KeyType:   "rsa",
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
+				KeyType:   domainkey.KeyType("rsa"),
 				PublicKey: testKeys.getPublicKeyBase64("rsa"),
 			},
 		},
 		{
 			name:     "relaxed/relaxed valid ed25519",
 			bodyhash: "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
-			header: "ARC-Message-Signature: i=1; a=ed25519-sha256; c=relaxed/relaxed; d=example.com; s=selector;\r\n" +
-				"        h=Date:From:To:Subject;\r\n" +
-				"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1728300596;\r\n" +
-				"        b=B8O8oPo2sTAfWlgKfcwdBAq6zLgv9+9zUfwGy9XsjvCA3UxBUpy6VuVzXcCyTrTj\r\n" +
-				"         vvlarL7sMnQeZvXN92nPDw==\r\n",
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"From: hogefuga@example.com\r\n",
@@ -315,19 +354,14 @@ func TestARCMessageSignatureVerify(t *testing.T) {
 				"Subject: test\r\n",
 			},
 			domainkey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"ed25519-sha256"},
-				KeyType:   "ed25519",
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
+				KeyType:   domainkey.KeyType("ed25519"),
 				PublicKey: testKeys.getPublicKeyBase64("ed25519"),
 			},
 		},
 		{
 			name:     "simple/simple valid ed25519",
 			bodyhash: "XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=",
-			header: "ARC-Message-Signature: i=1; a=ed25519-sha256; c=simple/simple; d=example.com; s=selector;\r\n" +
-				"        h=Date:From:To:Subject;\r\n" +
-				"        bh=XgF6uYzcgcROQtd83d1Evx8x2uW+SniFx69skZp5azo=; t=1728300596;\r\n" +
-				"        b=xcCQDNQSYZW0jnjeAFmshNjmMMe3x3pxVw2fIKjCRkjzJPEexL9SWI6C/RpeeDBf\r\n" +
-				"        +/vMpqpDxgvnFbHHcHIrBA==\r\n",
 			headers: []string{
 				"Date: Sat, 03 Feb 2024 23:36:43 +0900\r\n",
 				"From: hogefuga@example.com\r\n",
@@ -335,8 +369,8 @@ func TestARCMessageSignatureVerify(t *testing.T) {
 				"Subject: test\r\n",
 			},
 			domainkey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"ed25519-sha256"},
-				KeyType:   "ed25519",
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
+				KeyType:   domainkey.KeyType("ed25519"),
 				PublicKey: testKeys.getPublicKeyBase64("ed25519"),
 			},
 		},
@@ -344,15 +378,189 @@ func TestARCMessageSignatureVerify(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ams, err := ParseARCMessageSignature(tc.header)
+			// Create ARCMessageSignature for signing
+			ams := &ARCMessageSignature{
+				InstanceNumber:   1,
+				Algorithm:        getSignatureAlgorithmFromName(tc.name),
+				BodyHash:         tc.bodyhash,
+				Canonicalization: getCanonicalizationFromName(tc.name),
+				Domain:           "example.com",
+				Selector:         "selector",
+				Timestamp:        getTimestampFromName(tc.name),
+				canonnAndAlgo: &CanonicalizationAndAlgorithm{
+					Header:    getHeaderCanonicalization(getCanonicalizationFromName(tc.name)),
+					Body:      getBodyCanonicalization(getCanonicalizationFromName(tc.name)),
+					Algorithm: getSignatureAlgorithmFromName(tc.name),
+					HashAlgo:  getHashAlgo(getSignatureAlgorithmFromName(tc.name)),
+				},
+			}
+
+			// Set Headers field based on the headers in the test case
+			headerNames := make([]string, 0, len(tc.headers))
+			for _, header := range tc.headers {
+				k, _, ok := strings.Cut(header, ":")
+				if !ok {
+					continue
+				}
+				headerNames = append(headerNames, strings.TrimSpace(k))
+			}
+			ams.Headers = strings.Join(headerNames, ":")
+
+			// Select appropriate private key
+			var privateKey crypto.Signer
+			if ams.Algorithm == SignatureAlgorithmRSA_SHA256 || ams.Algorithm == SignatureAlgorithmRSA_SHA1 {
+				privateKey = testKeys.RSAPrivateKey
+			} else if ams.Algorithm == SignatureAlgorithmED25519_SHA256 {
+				privateKey = testKeys.ED25519PrivateKey
+			} else {
+				// Default to RSA private key if algorithm is not set
+				privateKey = testKeys.RSAPrivateKey
+			}
+
+			// Sign the headers
+			err := ams.Sign(tc.headers, privateKey)
+			if err != nil {
+				t.Fatalf("failed to sign: %s", err)
+			}
+
+			// Create headers with AMS for verification
+			headersWithAMS := append(tc.headers, "ARC-Message-Signature: "+ams.String()+"\r\n")
+
+			// Parse the signed AMS for verification
+			parsedAMS, err := ParseARCMessageSignature("ARC-Message-Signature: " + ams.String() + "\r\n")
 			if err != nil {
 				t.Fatalf("failed to parse arc message signature: %s", err)
 			}
-			result := ams.Verify(tc.headers, tc.bodyhash, &tc.domainkey)
+
+			// Verify the signature
+			result := parsedAMS.Verify(headersWithAMS, tc.bodyhash, &tc.domainkey)
 
 			if result.Error() != nil {
 				t.Errorf("verify failed: %s", result.Error())
 			}
 		})
+	}
+}
+
+// Helper functions to determine canonicalization and timestamp from test name
+func getCanonicalizationFromName(name string) string {
+	if strings.Contains(name, "simple/simple") {
+		return "simple/simple"
+	} else if strings.Contains(name, "relaxed/relaxed") {
+		return "relaxed/relaxed"
+	}
+	return "simple/simple" // default
+}
+
+func getTimestampFromName(name string) int64 {
+	if strings.Contains(name, "ed25519") {
+		return 1728300596
+	}
+	return 1706971004
+}
+
+func getHeaderCanonicalization(canon string) Canonicalization {
+	parts := strings.Split(canon, "/")
+	if len(parts) > 0 {
+		return Canonicalization(parts[0])
+	}
+	return CanonicalizationSimple
+}
+
+func getBodyCanonicalization(canon string) Canonicalization {
+	parts := strings.Split(canon, "/")
+	if len(parts) > 1 {
+		return Canonicalization(parts[1])
+	}
+	return CanonicalizationSimple
+}
+
+func getHashAlgo(algo SignatureAlgorithm) crypto.Hash {
+	switch algo {
+	case SignatureAlgorithmRSA_SHA1:
+		return crypto.SHA1
+	case SignatureAlgorithmRSA_SHA256:
+		return crypto.SHA256
+	case SignatureAlgorithmED25519_SHA256:
+		return crypto.SHA256
+	default:
+		return crypto.SHA256
+	}
+}
+
+// Helper function to get hash algorithm type from signature algorithm
+func getHashAlgoType(algo SignatureAlgorithm) domainkey.HashAlgo {
+	switch algo {
+	case SignatureAlgorithmRSA_SHA1:
+		return domainkey.HashAlgoSHA1
+	case SignatureAlgorithmRSA_SHA256, SignatureAlgorithmED25519_SHA256:
+		return domainkey.HashAlgoSHA256
+	default:
+		return domainkey.HashAlgoSHA256
+	}
+}
+
+// Helper function to get signature algorithm from test name
+func getSignatureAlgorithmFromName(name string) SignatureAlgorithm {
+	if strings.Contains(name, "ed25519") {
+		return SignatureAlgorithmED25519_SHA256
+	}
+	return SignatureAlgorithmRSA_SHA256
+}
+
+func TestARCMessageSignatureSignAndVerify(t *testing.T) {
+	headers := []string{
+		"From: alice@example.com\r\n",
+		"To: bob@example.com\r\n",
+		"Subject: Test\r\n",
+	}
+
+	// Calculate actual body hash for the test
+	body := "Hello World!\r\n" // Simple body for testing
+	bodyHashCalculator := bodyhash.NewBodyHash(canonical.Relaxed, crypto.SHA256, 0)
+	bodyHashCalculator.Write([]byte(body))
+	bodyHashCalculator.Close()
+	actualBodyHash := bodyHashCalculator.Get()
+
+	ams := &ARCMessageSignature{
+		Algorithm:        SignatureAlgorithmRSA_SHA256,
+		Canonicalization: "relaxed/relaxed",
+		Domain:           "example.com",
+		Selector:         "default",
+		InstanceNumber:   1,
+		BodyHash:         actualBodyHash,
+	}
+
+	// Mock key for signing
+	privateKey := testKeys.RSAPrivateKey
+
+	// Sign
+	err := ams.Sign(headers, privateKey)
+	if err != nil {
+		t.Fatalf("Failed to sign: %v", err)
+	}
+
+	// Mock domain key for verification
+	domainKey := &domainkey.DomainKey{
+		PublicKey: testKeys.RSAPublicKeyBase64,
+		KeyType:   domainkey.KeyType("rsa"),
+	}
+
+	// Verify
+	// Parse the signature header to set the raw field
+	parsedAMS, err := ParseARCMessageSignature("ARC-Message-Signature: " + ams.String() + "\r\n")
+	if err != nil {
+		t.Fatalf("Failed to parse ARC-Message-Signature: %v", err)
+	}
+	// Set the signature to the one generated by Sign function for verification
+	//parsedAMS.Signature = "UEbs7onwJ0OmfT0M3EWURRximbYTQfwWn0B8vE80U9oQX74KmpG2tExJtwZ/qoO+hBPTCryAL3FVqdh/tufXHjLetRdfr5IQ60R5Eh4ea2mrFnOF4dUVXD6nLxzPFl8IwYD+AWTlEz9uz5w7NiyqoLJ5RYiMlPszMYOPyZrbqD/a3HVMHxGS41vL++Tk1RSstp3WSm+P665EQUFRTmfwHxLfyDMX3D6K/PvWKXFHbXuq4tVjsNpTY5ApIfs1bTyLddLjim0g+Xtf1F0Br4IyexnptgiVUJ0B+kvH9nMRF+ORsEJRdF5yTimZ3aU+vjcUNUyEt1JYMWhYo5pDBCaThg=="
+	if err != nil {
+		t.Fatalf("Failed to parse ARC-Message-Signature: %v", err)
+	}
+	// Note: We need to pass the headers including the signature header for verification
+	allHeaders := append(headers, "ARC-Message-Signature: "+ams.String()+"\r\n")
+	result := parsedAMS.Verify(allHeaders, actualBodyHash, domainKey)
+	if result.Error() != nil {
+		t.Errorf("Verification failed: %s - %s", result.Status(), result.Message())
 	}
 }

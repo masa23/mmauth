@@ -17,22 +17,11 @@ type BodyHash struct {
 	hashAlgo crypto.Hash
 	w        io.WriteCloser
 	hasher   hash.Hash
-	limit    int64
 }
 
 // メール本文の書き込みを行う
 // ハッシュ値を計算する
 func (b *BodyHash) Write(p []byte) (n int, err error) {
-	// limitが設定されている場合はlimitを超えないように制限する
-	if b.limit > 0 {
-		l := int64(len(p))
-		if l > b.limit {
-			p = p[:b.limit]
-			b.limit = 0
-		} else {
-			b.limit -= l
-		}
-	}
 	return b.w.Write(p)
 }
 
@@ -57,16 +46,23 @@ func NewBodyHash(canon canonical.Canonicalization, hashAlgo crypto.Hash, limit i
 	bh := &BodyHash{
 		hashAlgo: hashAlgo,
 		hasher:   hasher,
-		limit:    limit,
 	}
+
+	// limitWriterを介してcanonicalizerに接続する
+	// canonicalization -> limitWriter -> hasher
+	var writer io.Writer = hasher
+	if limit > 0 {
+		writer = newLimitWriter(writer, limit)
+	}
+
 	switch canon {
 	case canonical.Simple:
-		bh.w = canonical.SimpleBody(hasher)
+		bh.w = canonical.SimpleBody(writer)
 	case canonical.Relaxed:
-		bh.w = canonical.RelaxedBody(hasher)
+		bh.w = canonical.RelaxedBody(writer)
 	default:
 		// 指定が不明の場合はSimpleを使う
-		bh.w = canonical.SimpleBody(hasher)
+		bh.w = canonical.SimpleBody(writer)
 	}
 	return bh
 }

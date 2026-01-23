@@ -4,7 +4,6 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/internal/dkimheader"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -29,8 +29,10 @@ const (
 type SignatureAlgorithm string
 
 const (
-	SignatureAlgorithmRSA_SHA1       SignatureAlgorithm = "rsa-sha1"
-	SignatureAlgorithmRSA_SHA256     SignatureAlgorithm = "rsa-sha256"
+	// rsa-sha1はセキュリティ上の理由から使用を推奨しません
+	SignatureAlgorithmRSA_SHA1   SignatureAlgorithm = "rsa-sha1"
+	SignatureAlgorithmRSA_SHA256 SignatureAlgorithm = "rsa-sha256"
+	// ed25519-sha256は実験的な機能です
 	SignatureAlgorithmED25519_SHA256 SignatureAlgorithm = "ed25519-sha256"
 )
 
@@ -127,6 +129,17 @@ func (ds *Signature) ResultString() string {
 	return result.String()
 }
 
+// stripFWS はFWS (Folding White Space) を削除する
+// FWS = WSP*(CRLF WSP+)
+func stripFWS(s string) string {
+	// まず、CRLFとそれに続く空白文字を削除
+	s = strings.ReplaceAll(s, "\r\n", "")
+	// 次に、タブとスペースを削除
+	s = strings.ReplaceAll(s, "\t", "")
+	s = strings.ReplaceAll(s, " ", "")
+	return s
+}
+
 // DKIM-SignatureヘッダをパースしDKIMSignatureを返す
 func ParseSignature(s string) (*Signature, error) {
 	result := &Signature{}
@@ -137,12 +150,17 @@ func ParseSignature(s string) (*Signature, error) {
 	if !strings.EqualFold(k, "dkim-signature") {
 		return nil, fmt.Errorf("invalid header field")
 	}
-	params, err := header.ParseHeaderParams(v)
+	params, err := dkimheader.ParseSignatureParams(v)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse header field: %v", err)
+		return nil, fmt.Errorf("failed to parse DKIM-Signature header field: %v", err)
 	}
 
+	seenTags := make(map[string]bool)
 	for key, value := range params {
+		if seenTags[key] {
+			return nil, fmt.Errorf("duplicate tag '%s' found in DKIM-Signature", key)
+		}
+		seenTags[key] = true
 		value = header.StripWhiteSpace(value)
 		switch key {
 		case "a":
@@ -157,9 +175,9 @@ func ParseSignature(s string) (*Signature, error) {
 				return nil, fmt.Errorf("invalid algorithm")
 			}
 		case "b":
-			result.Signature = value
+			result.Signature = stripFWS(value)
 		case "bh":
-			result.BodyHash = value
+			result.BodyHash = stripFWS(value)
 		case "c":
 			result.Canonicalization = value
 		case "d":
@@ -214,6 +232,48 @@ func ParseSignature(s string) (*Signature, error) {
 		HashAlgo:  hashAlgo(result.Algorithm),
 	}
 
+	// h=タグが空でないことを検証
+	if result.Headers == "" {
+		return nil, fmt.Errorf("h= tag must not be empty")
+	}
+
+	// h=タグにFromヘッダが含まれていることを検証 (RFC 6376要求事項)
+	headersList := strings.Split(result.Headers, ":")
+	fromIncluded := false
+	for _, h := range headersList {
+		if strings.ToLower(strings.TrimSpace(h)) == "from" {
+			fromIncluded = true
+			break
+		}
+	}
+	if !fromIncluded {
+		return nil, fmt.Errorf("h= tag must include 'From' header")
+	}
+
+	// i=タグの補完とドメイン整合性の検証 (RFC 6376要件)
+	if result.Identity == "" {
+		// i=タグが存在しない場合、デフォルト値として "@" + d を設定
+		result.Identity = "@" + result.Domain
+	} else {
+		// Identityからドメイン部分を抽出
+		atIndex := strings.LastIndex(result.Identity, "@")
+		if atIndex != -1 {
+			identityDomain := result.Identity[atIndex+1:]
+			// d=タグのドメインがi=タグのドメインと同じかサブドメインであることを確認
+			if result.Domain != identityDomain && !strings.HasSuffix(identityDomain, "."+result.Domain) {
+				return nil, fmt.Errorf("i= tag domain must be the same as or a subdomain of d= tag domain")
+			}
+		}
+	}
+
+	// x=タグの値がt=タグの値より大きいことの検証 (RFC 6376要件)
+	// 署名の有効期限は署名時刻より後でなければならない
+	if result.SignatureExpiration != 0 && result.Timestamp != 0 {
+		if result.SignatureExpiration <= result.Timestamp {
+			return nil, fmt.Errorf("x= tag value must be greater than t= tag value")
+		}
+	}
+
 	return result, nil
 }
 
@@ -254,8 +314,18 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 		}
 	}
 
-	headers = append(headers, "DKIM-Signature: "+d.String())
-	signature, err := header.Signer(headers, key, canHeader)
+	// DKIM-Signatureヘッダのb=タグの値を空文字列として扱う
+	// RFC 6376 §3.7: DKIM-Signature itself is hashed without a trailing CRLF.
+	// StripBValueForSigning expects a raw header field line (CRLF-terminated).
+	dkimSigHeader := "DKIM-Signature: " + d.String() + "\r\n"
+	strippedHeader := dkimheader.StripBValueForSigning(dkimSigHeader)
+
+	// Build signing header set (raw), appending DKIM-Signature (with empty b=)
+	signingHeaders := append(append([]string{}, headers...), strippedHeader)
+
+	// 適切なハッシュアルゴリズムを選択
+	hashAlgo := hashAlgo(d.Algorithm)
+	signature, err := header.SignerWithOmitLastCRLF(signingHeaders, key, canHeader, hashAlgo, true)
 	if err != nil {
 		return err
 	}
@@ -266,9 +336,21 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 // DKIMSignatureを検証する
 // domainKeyがnilの場合はLookupDomainKeyを実行
 func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domainkey.DomainKey) {
+	d.VerifyWithResolver(headers, bodyHash, domainKey, nil)
+}
+
+// DKIMSignatureを検証する
+// domainKeyがnilの場合はLookupDomainKeyを実行
+// resolverがnilの場合はデフォルトのリゾルバーを使用
+func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domainKey *domainkey.DomainKey, resolver domainkey.TXTResolver) {
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
-		domKey, err := domainkey.LookupDKIMDomainKey(d.Selector, d.Domain)
+		// リゾルバーがnilの場合はタイムアウト付きのデフォルトリゾルバーを作成
+		if resolver == nil {
+			resolver = domainkey.NewDefaultTXTResolver()
+		}
+
+		domKey, err := domainkey.LookupDKIMDomainKeyWithResolver(d.Selector, d.Domain, resolver)
 		if errors.Is(err, domainkey.ErrNoRecordFound) {
 			d.VerifyResult = &VerifyResult{
 				status: VerifyStatusPermErr,
@@ -287,13 +369,13 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 		domainKey = &domKey
 	}
 
-	// ToDo: テストモードの確認
+	// テストモードの確認
 	testFlagMsg := ""
 	if domainKey.IsTestFlag() {
 		testFlagMsg = " test mode"
 	}
 
-	// service typeの確認
+	// service typeの確認 (RFC 6376要件)
 	if !domainKey.IsService(domainkey.ServiceTypeEmail) {
 		d.VerifyResult = &VerifyResult{
 			status:    VerifyStatusPermErr,
@@ -304,40 +386,18 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 		return
 	}
 
-	// i=がある場合はfromDomainと一致しているか確認
-	from := header.ExtractHeader(headers, "From")
-	fromDomain, err := header.ParseAddressDomain(from)
-	if err != nil {
-		d.VerifyResult = &VerifyResult{
-			status:    VerifyStatusPermErr,
-			err:       fmt.Errorf("failed to parse from domain: %v", err),
-			msg:       "failed to parse from domain" + testFlagMsg,
-			domainKey: domainKey,
-		}
-		return
-	}
-	if d.Identity != "" {
-		if !strings.HasSuffix(d.Identity, "@"+fromDomain) && !strings.HasSuffix(d.Identity, "."+fromDomain) {
-			d.VerifyResult = &VerifyResult{
-				status: VerifyStatusFail,
-				err:    fmt.Errorf("DKIM-Signature identity domain mismatch: Identify=%s fromDomain=%s", d.Identity, fromDomain),
-				msg:    "identity is mismatch" + testFlagMsg,
-			}
-			return
-		}
-	}
-
-	// DKIM-Signatureがない場合はneutral
+	// DKIM-Signatureがない場合はneutral (RFC 6376要件)
 	if d.raw == "" {
 		d.VerifyResult = &VerifyResult{
 			status:    VerifyStatusNeutral,
 			err:       errors.New("DKIM-Signature is not found"),
-			msg:       "sign is not found" + testFlagMsg,
+			msg:       "signature is not found" + testFlagMsg,
 			domainKey: domainKey,
 		}
 		return
 	}
-	// バージョンを検証
+
+	// バージョンを検証 (RFC 6376要件)
 	if d.Version != 1 {
 		d.VerifyResult = &VerifyResult{
 			status:    VerifyStatusPermErr,
@@ -347,7 +407,8 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 		}
 		return
 	}
-	// exireを検証
+
+	// expireを検証 (RFC 6376要件)
 	// TimestampとSignatureExpirationがセットされてない場合は検証しない
 	if d.SignatureExpiration != 0 {
 		// 現在時刻がSignatureExpirationを超えていたらFail
@@ -361,17 +422,20 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 			}
 			return
 		}
+
+		// TimestampがSignatureExpirationより大きい場合はエラー (RFC 6376違反)
 		if d.Timestamp > d.SignatureExpiration {
 			d.VerifyResult = &VerifyResult{
 				status:    VerifyStatusPermErr,
-				err:       fmt.Errorf("DKIM-Signature timestamp is invalid: timestamp=%d expiration=%d", d.Timestamp, d.SignatureExpiration),
-				msg:       "timestamp is invalid" + testFlagMsg,
+				err:       fmt.Errorf("DKIM-Signature timestamp is greater than expiration: timestamp=%d expiration=%d", d.Timestamp, d.SignatureExpiration),
+				msg:       "signature timestamp is greater than expiration" + testFlagMsg,
 				domainKey: domainKey,
 			}
 			return
 		}
 	}
-	// ボディーハッシュを検証
+
+	// ボディーハッシュを検証 (RFC 6376要件)
 	if d.BodyHash != bodyHash {
 		d.VerifyResult = &VerifyResult{
 			status:    VerifyStatusFail,
@@ -384,14 +448,16 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 
 	// ヘッダの抽出と連結
 	h := header.ExtractHeadersDKIM(headers, strings.Split(d.Headers, ":"))
-	h = append(h, header.DeleteSignature(d.raw))
+	dkimSigHeader := dkimheader.StripBValueForSigning(d.raw)
 
 	// ヘッダの正規化
 	var s string
 	for _, header := range h {
 		s += canonical.Header(header, canonical.Canonicalization(d.canonnAndAlgo.Header))
 	}
-	// 末尾のCRLFを削除
+	// DKIM-Signatureヘッダの正規化
+	s += canonical.Header(dkimSigHeader, canonical.Canonicalization(d.canonnAndAlgo.Header))
+	// 末尾のCRLFを削除 (DKIM-Signatureヘッダの分は既に削除されている)
 	s = strings.TrimSuffix(s, "\r\n")
 
 	// 署名をbase64デコード
@@ -424,7 +490,8 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 	}
 
 	// 公開鍵をパース
-	pub, err := x509.ParsePKIXPublicKey(decoded)
+	// RFC 8463: ed25519 public key is raw 32-octet key, not PKIX
+	pub, err := domainkey.ParseDKIMPublicKey(decoded, domainKey.KeyType)
 	if err != nil {
 		d.VerifyResult = &VerifyResult{
 			status:    VerifyStatusPermErr,

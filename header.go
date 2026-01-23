@@ -102,11 +102,6 @@ func ParseAddressDomain(s string) (string, error) {
 	return header.ParseAddressDomain(s)
 }
 
-// ヘッダリストから指定された複数のヘッダをARC署名順で抽出する
-func ExtractHeadersARC(headers []string, keys []string) []string {
-	return header.ExtractHeadersARC(headers, keys)
-}
-
 // ヘッダリストから指定された複数のヘッダをDKIM署名順で抽出する
 func ExtractHeadersDKIM(headers []string, keys []string) []string {
 	return header.ExtractHeadersDKIM(headers, keys)
