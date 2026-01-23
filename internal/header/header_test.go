@@ -514,7 +514,12 @@ func TestExtractHeadersDKIM_PlanCases(t *testing.T) {
 	})
 }
 
-func TestExtractHeadersARC(t *testing.T) {
+func TestExtractHeadersUnified(t *testing.T) {
+	// This test function validates the header extraction logic that is shared between
+	// DKIM and ARC implementations. Originally, DKIM and ARC had separate extraction
+	// functions, but they were unified to use the same ExtractHeadersDKIM function.
+	// The test covers the behavior required for both DKIM (RFC 6376 §5.4.2) and ARC
+	// header processing where applicable.
 	testCases := []struct {
 		name    string
 		list    []string

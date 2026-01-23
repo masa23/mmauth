@@ -1,6 +1,7 @@
 package canonical
 
 import (
+	"bytes"
 	"io"
 	"strings"
 )
@@ -144,16 +145,16 @@ func (c *relaxedBodyCanonicalizer) Close() error {
 	// CRLFを修正
 	fixed := c.crlfFixer.Fix(c.buf)
 
-	// 文字列を\r\nで分割して行のスライスを作成
-	lines := strings.Split(string(fixed), "\r\n")
+	// バイトスライスを\r\nで分割して行のスライスを作成
+	lines := bytes.Split(fixed, []byte("\r\n"))
 
 	// 最後の空行を削除（スペースやタブのみの行も含む）
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+	for len(lines) > 0 && len(bytes.TrimSpace(lines[len(lines)-1])) == 0 {
 		lines = lines[:len(lines)-1]
 	}
 
 	// 各行を処理
-	var canonical []string
+	var canonical [][]byte
 	for _, line := range lines {
 		// 行末の空白を削除
 		for len(line) > 0 && (line[len(line)-1] == ' ' || line[len(line)-1] == '\t') {
@@ -163,7 +164,7 @@ func (c *relaxedBodyCanonicalizer) Close() error {
 		// 行内の連続する空白を単一のスペースに圧縮
 		var compressedLine []byte
 		wsp := false
-		for _, ch := range []byte(line) {
+		for _, ch := range line {
 			if ch == ' ' || ch == '\t' {
 				if !wsp {
 					compressedLine = append(compressedLine, ' ')
@@ -175,17 +176,17 @@ func (c *relaxedBodyCanonicalizer) Close() error {
 			}
 		}
 
-		canonical = append(canonical, string(compressedLine))
+		canonical = append(canonical, compressedLine)
 	}
 
 	// 結果を結合
-	result := strings.Join(canonical, "\r\n")
+	result := bytes.Join(canonical, []byte("\r\n"))
 
 	// 末尾にCRLFを追加
-	result += "\r\n"
+	result = append(result, []byte("\r\n")...)
 
 	// データを書き込む
-	if _, err := c.w.Write([]byte(result)); err != nil {
+	if _, err := c.w.Write(result); err != nil {
 		return err
 	}
 

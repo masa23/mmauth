@@ -120,6 +120,15 @@ func (d *DomainKey) IsService(service ServiceType) bool {
 	return false
 }
 
+// isKeyRevoked checks if a domain key has been revoked.
+// A key is considered revoked if the record contains "p=" but the parsed PublicKey is empty.
+func isKeyRevoked(record string, domainKey DomainKey) error {
+	if strings.Contains(record, "p=") && domainKey.PublicKey == "" {
+		return fmt.Errorf("key revoked: %w", ErrNoRecordFound)
+	}
+	return nil
+}
+
 // LookupDKIMDomainKey DKIMのドメインキーをLookupする
 // versionがDKIM1でない場合はエラーを返す
 func LookupDKIMDomainKey(selector, domain string) (DomainKey, error) {
@@ -174,8 +183,8 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 			return domainKey, nil
 		}
 		// p=が空の場合はキーが撤回されたとみなす
-		if strings.Contains(r, "p=") && domainKey.PublicKey == "" {
-			return DomainKey{}, fmt.Errorf("key revoked: %w", ErrNoRecordFound)
+		if err := isKeyRevoked(r, domainKey); err != nil {
+			return DomainKey{}, err
 		}
 	}
 	return DomainKey{}, ErrNoRecordFound
@@ -205,8 +214,8 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 				return domainKey, nil
 			}
 			// p=が空の場合はキーが撤回されたとみなす
-			if strings.Contains(r, "p=") && domainKey.PublicKey == "" {
-				return DomainKey{}, fmt.Errorf("key revoked: %w", ErrNoRecordFound)
+			if err := isKeyRevoked(r, domainKey); err != nil {
+				return DomainKey{}, err
 			}
 		}
 		return DomainKey{}, ErrNoRecordFound
@@ -234,8 +243,8 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 			return domainKey, nil
 		}
 		// p=が空の場合はキーが撤回されたとみなす
-		if strings.Contains(r, "p=") && domainKey.PublicKey == "" {
-			return DomainKey{}, fmt.Errorf("key revoked: %w", ErrNoRecordFound)
+		if err := isKeyRevoked(r, domainKey); err != nil {
+			return DomainKey{}, err
 		}
 	}
 	return DomainKey{}, ErrNoRecordFound

@@ -81,7 +81,8 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 		// "Note especially that the DKIM "h" tag is NOT allowed and, if found, MUST result in a cv status of "fail""
 		// Also, the "bh" tag is not allowed as ARC-Seal signatures don't cover the message body.
 		// RFC 8617: ARC-Seal に h= は NOT allowed, 見つけたら cv=fail
-		if key == "h" || key == "bh" {
+		// Normalize key to lowercase for comparison to catch case-insensitive matches
+		if strings.ToLower(key) == "h" || strings.ToLower(key) == "bh" {
 			result.ChainValidation = ChainValidationResultFail
 			// エラーを返さずに、パースを継続
 			continue

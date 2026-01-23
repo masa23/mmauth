@@ -43,6 +43,30 @@ func TestParseARCSealForbiddenTags(t *testing.T) {
 			wantErr:             false,                     // エラーを返さない
 			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
 		},
+		{
+			name: "ARC-Seal with uppercase 'H' tag",
+			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; H=From:To;\r\n" +
+				"        d=example.org; s=selector;\r\n" +
+				"        b=signature",
+			wantErr:             false,                     // エラーを返さない
+			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
+		},
+		{
+			name: "ARC-Seal with uppercase 'BH' tag",
+			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; BH=bodyhash;\r\n" +
+				"        d=example.org; s=selector;\r\n" +
+				"        b=signature",
+			wantErr:             false,                     // エラーを返さない
+			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
+		},
+		{
+			name: "ARC-Seal with mixed case 'h' tag",
+			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; H=From:To;\r\n" +
+				"        d=example.org; s=selector;\r\n" +
+				"        b=signature",
+			wantErr:             false,                     // エラーを返さない
+			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
+		},
 	}
 
 	for _, tt := range tests {
