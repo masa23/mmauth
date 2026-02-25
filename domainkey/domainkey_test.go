@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestParseDomainKeyRecode(t *testing.T) {
+func TestParseDomainKeyRecord(t *testing.T) {
 	testCases := []struct {
 		name           string
 		input          string
@@ -83,11 +83,50 @@ func TestParseDomainKeyRecode(t *testing.T) {
 			},
 			expectedErr: nil,
 		},
+		{
+			name:  "h tag with unknown algorithm should ignore per RFC 6376",
+			input: "v=DKIM1; h=sha256:sha512:unknownalgo; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+			expectedResult: DomainKey{
+				Version:       "DKIM1",
+				HashAlgo:      []HashAlgo{HashAlgoSHA256}, // sha512 and unknownalgo ignored
+				KeyType:       KeyTypeRSA,
+				PublicKey:     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+				ServiceType:   []ServiceType{},
+				SelectorFlags: []SelectorFlags{},
+			},
+			expectedErr: nil,
+		},
+		{
+			name:  "k tag with unknown key type should ignore per RFC 6376",
+			input: "v=DKIM1; h=sha256; k=rsa:ecdsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+			expectedResult: DomainKey{
+				Version:       "DKIM1",
+				HashAlgo:      []HashAlgo{HashAlgoSHA256},
+				KeyType:       KeyTypeRSA, // ecdsa ignored, only last recognized value kept
+				PublicKey:     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+				ServiceType:   []ServiceType{},
+				SelectorFlags: []SelectorFlags{},
+			},
+			expectedErr: nil,
+		},
+		{
+			name:  "s tag with unknown service type should ignore per RFC 6376",
+			input: "v=DKIM1; h=sha256; k=rsa; s=email:smtp; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+			expectedResult: DomainKey{
+				Version:       "DKIM1",
+				HashAlgo:      []HashAlgo{HashAlgoSHA256},
+				KeyType:       KeyTypeRSA,
+				PublicKey:     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
+				ServiceType:   []ServiceType{ServiceTypeEmail}, // smtp ignored
+				SelectorFlags: []SelectorFlags{},
+			},
+			expectedErr: nil,
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actualResult, actualErr := ParseDomainKeyRecode(tc.input)
+			actualResult, actualErr := ParseDomainKeyRecord(tc.input)
 
 			if actualResult.Version != tc.expectedResult.Version {
 				t.Errorf("Expected version: %s, but got: %s", tc.expectedResult.Version, actualResult.Version)
