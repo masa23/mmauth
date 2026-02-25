@@ -173,9 +173,14 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 	} else if err != nil {
 		return DomainKey{}, ErrDNSLookupFailed
 	}
-	// レコードの解析
-	for _, r := range res {
-		domainKey, err := ParseDomainKeyRecode(r)
+	return parseDomainKeyRecords(res)
+}
+
+// parseDomainKeyRecords parses DNS TXT records and extracts the domain key.
+// Returns the first valid domain key with a non-empty public key.
+func parseDomainKeyRecords(records []string) (DomainKey, error) {
+	for _, r := range records {
+		domainKey, err := ParseDomainKeyRecord(r)
 		if err != nil {
 			return DomainKey{}, err
 		}
@@ -194,38 +199,20 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) (DomainKey, error) {
 	query := fmt.Sprintf("%s._domainkey.%s", selector, domain)
 
+	var res []string
+	var err error
+
 	// If resolver is nil, use the default resolver
 	if resolver == nil {
-		res, err := DefaultResolver(query)
-		if dnsErr, ok := err.(*net.DNSError); ok {
-			if dnsErr.IsNotFound {
-				return DomainKey{}, ErrNoRecordFound
-			}
-		} else if err != nil {
-			return DomainKey{}, ErrDNSLookupFailed
-		}
-		// レコードの解析
-		for _, r := range res {
-			domainKey, err := ParseDomainKeyRecode(r)
-			if err != nil {
-				return DomainKey{}, err
-			}
-			if domainKey.PublicKey != "" {
-				return domainKey, nil
-			}
-			// p=が空の場合はキーが撤回されたとみなす
-			if err := isKeyRevoked(r, domainKey); err != nil {
-				return DomainKey{}, err
-			}
-		}
-		return DomainKey{}, ErrNoRecordFound
+		res, err = DefaultResolver(query)
+	} else {
+		// Use the provided resolver
+		// 5秒のタイムアウトを設定
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		res, err = resolver.LookupTXT(ctx, query)
 	}
 
-	// Use the provided resolver
-	// 5秒のタイムアウトを設定
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	res, err := resolver.LookupTXT(ctx, query)
 	if dnsErr, ok := err.(*net.DNSError); ok {
 		if dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound
@@ -233,25 +220,12 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 	} else if err != nil {
 		return DomainKey{}, ErrDNSLookupFailed
 	}
-	// レコードの解析
-	for _, r := range res {
-		domainKey, err := ParseDomainKeyRecode(r)
-		if err != nil {
-			return DomainKey{}, err
-		}
-		if domainKey.PublicKey != "" {
-			return domainKey, nil
-		}
-		// p=が空の場合はキーが撤回されたとみなす
-		if err := isKeyRevoked(r, domainKey); err != nil {
-			return DomainKey{}, err
-		}
-	}
-	return DomainKey{}, ErrNoRecordFound
+
+	return parseDomainKeyRecords(res)
 }
 
 // ドメインキーレコードの解析
-func ParseDomainKeyRecode(r string) (DomainKey, error) {
+func ParseDomainKeyRecord(r string) (DomainKey, error) {
 	var key DomainKey
 	key.raw = r
 
@@ -274,8 +248,9 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 					key.HashAlgo = append(key.HashAlgo, HashAlgoSHA1)
 				case HashAlgoSHA256:
 					key.HashAlgo = append(key.HashAlgo, HashAlgoSHA256)
+				// RFC 6376: Unrecognized algorithms MUST be ignored
 				default:
-					return DomainKey{}, ErrInvalidHashAlgo
+					// Unknown algorithms are ignored per RFC 6376 Section 3.6.1
 				}
 			}
 		case "k":
@@ -287,8 +262,9 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 					key.KeyType = KeyTypeRSA
 				case KeyTypeED25519:
 					key.KeyType = KeyTypeED25519
+				// RFC 6376: Unrecognized key types MUST be ignored
 				default:
-					return DomainKey{}, ErrInvalidKeyType
+					// Unknown key types are ignored per RFC 6376 Section 3.6.1
 				}
 			}
 		case "n":
@@ -305,8 +281,9 @@ func ParseDomainKeyRecode(r string) (DomainKey, error) {
 					key.ServiceType = append(key.ServiceType, ServiceTypeEmail)
 				case ServiceTypeAll:
 					key.ServiceType = append(key.ServiceType, ServiceTypeAll)
+				// RFC 6376: Unrecognized service types MUST be ignored
 				default:
-					return DomainKey{}, ErrInvalidServiceType
+					// Unknown service types are ignored per RFC 6376 Section 3.6.1
 				}
 			}
 		case "t":
