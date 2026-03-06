@@ -1,5 +1,8 @@
 # Changelog
 
+## [v1.0.7](https://github.com/masa23/mmauth/compare/v1.0.6...v1.0.7) - 2026-02-25
+- domainkeyパッケージをRFC準拠漏れを修正 by @masa23 in https://github.com/masa23/mmauth/pull/17
+
 ## [v1.0.6](https://github.com/masa23/mmauth/compare/v1.0.5...v1.0.6) - 2026-01-23
 - SPFの判定パッケージを追加 by @masa23 in https://github.com/masa23/mmauth/pull/14
 - RFCにより厳格に修正 by @masa23 in https://github.com/masa23/mmauth/pull/16
