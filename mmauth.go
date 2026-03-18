@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
 	"github.com/masa23/mmauth/internal/bodyhash"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/spf"
 )
 
 const (
@@ -37,6 +39,7 @@ const (
 type AuthenticationHeaders struct {
 	DKIMSignatures *dkim.Signatures
 	ARCSignatures  *arc.Signatures
+	SPFResult      *spf.Result
 }
 
 func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
@@ -314,6 +317,54 @@ func (m *MMAuth) Verify() {
 			}
 		}
 	}
+}
+
+func evaluateSPF(remoteAddr net.IP, helo, mailFrom string) *spf.Result {
+	result := spf.CheckSPF(remoteAddr, helo, "", helo)
+	// RFC 7208準拠のSPFチェック: まずHELOで評価し、結果がnone/neutralの場合のみMAIL FROMでフォールバック
+	if result.Status == spf.None || result.Status == spf.Neutral {
+		mailFromDomain := helo
+		if mailFrom != "" {
+			if d, err := ParseAddressDomain(mailFrom); err == nil {
+				mailFromDomain = d
+			}
+		}
+		result = spf.CheckSPF(remoteAddr, mailFromDomain, mailFrom, helo)
+	}
+	return result
+}
+
+// 認証結果を配列形式で渡す
+func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom string) []string {
+	if m.AuthenticationHeaders == nil {
+		return nil
+	}
+	// SPFチェックを行う
+	spfResult := evaluateSPF(remoteAddr, helo, mailFrom)
+
+	var results []string
+	if spfResult != nil {
+		results = append(results, fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", spfResult.Status, mailFrom, helo))
+	}
+
+	// DKIM
+	dkimSigns := m.AuthenticationHeaders.DKIMSignatures
+	if dkimSigns != nil {
+		for _, d := range *dkimSigns {
+			if d == nil {
+				continue
+			}
+			results = append(results, d.ResultString())
+		}
+	}
+
+	// ARC
+	arcSigns := m.AuthenticationHeaders.ARCSignatures
+	if arcSigns != nil {
+		results = append(results, arcSigns.GetVerifyResultString())
+	}
+
+	return results
 }
 
 func (m *MMAuth) GetBodyHash(bca BodyCanonicalizationAndAlgorithm) string {
