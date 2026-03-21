@@ -83,11 +83,8 @@ type Record struct {
 // Per RFC 7489 Section 6.2 and 6.4.
 func parseReportURI(uri string) (*ReportURI, error) {
 	// Split on '!' which separates URI from size limit
-	// Use SplitN with limit 2 to detect and reject multiple '!' delimiters
+	// Use SplitN with limit 2 so the second element (if present) holds the size spec
 	parts := strings.SplitN(uri, "!", 2)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("invalid report URI: %s", uri)
-	}
 
 	result := &ReportURI{
 		URI:     strings.TrimSpace(parts[0]),
@@ -101,20 +98,15 @@ func parseReportURI(uri string) (*ReportURI, error) {
 			return nil, fmt.Errorf("invalid size specification in URI: %s", uri)
 		}
 
-		// Extract numeric part and unit
+		// Extract numeric part and unit without incremental concatenation
 		var numStr string
 		var unit string
-		for i, r := range sizeSpec {
-			if r >= '0' && r <= '9' {
-				numStr += string(r)
-			} else {
-				unit = sizeSpec[i:]
-				break
-			}
+		i := 0
+		for i < len(sizeSpec) && sizeSpec[i] >= '0' && sizeSpec[i] <= '9' {
+			i++
 		}
-		if unit == "" {
-			unit = sizeSpec[len(numStr):]
-		}
+		numStr = sizeSpec[:i]
+		unit = sizeSpec[i:]
 
 		// Parse the numeric value
 		num, err := strconv.ParseUint(numStr, 10, 64)
@@ -124,23 +116,36 @@ func parseReportURI(uri string) (*ReportURI, error) {
 
 		// Apply unit multiplier (powers of two per RFC 7489)
 		// Use uint64 for the shift operation to avoid overflow before final int64 conversion
+		// Pre-check for overflow before shifting
 		var maxSize uint64
 		switch strings.ToLower(unit) {
 		case "":
 			maxSize = num
 		case "k":
+			if num > (uint64(math.MaxInt64) >> 10) {
+				return nil, fmt.Errorf("size limit too large in URI: %s (max %d bytes)", uri, math.MaxInt64)
+			}
 			maxSize = num << 10 // 2^10
 		case "m":
+			if num > (uint64(math.MaxInt64) >> 20) {
+				return nil, fmt.Errorf("size limit too large in URI: %s (max %d bytes)", uri, math.MaxInt64)
+			}
 			maxSize = num << 20 // 2^20
 		case "g":
+			if num > (uint64(math.MaxInt64) >> 30) {
+				return nil, fmt.Errorf("size limit too large in URI: %s (max %d bytes)", uri, math.MaxInt64)
+			}
 			maxSize = num << 30 // 2^30
 		case "t":
+			if num > (uint64(math.MaxInt64) >> 40) {
+				return nil, fmt.Errorf("size limit too large in URI: %s (max %d bytes)", uri, math.MaxInt64)
+			}
 			maxSize = num << 40 // 2^40
 		default:
 			return nil, fmt.Errorf("invalid size unit in URI (must be k/m/g/t): %s", uri)
 		}
 
-		// Check for overflow before converting to int64
+		// Final check (redundant but kept as safety net)
 		if maxSize > math.MaxInt64 {
 			return nil, fmt.Errorf("size limit too large in URI: %s (max %d bytes)", uri, math.MaxInt64)
 		}
@@ -225,6 +230,11 @@ func ParseRecord(raw string) (*Record, error) {
 	var d Record
 	d.raw = raw
 
+	// Track whether rua/ruf tags have been seen to properly detect duplicates
+	// even when the tag parsing fails to add any valid URIs
+	var sawRuaTag bool
+	var sawRufTag bool
+
 	pairs := strings.Split(raw, ";")
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
@@ -243,9 +253,10 @@ func ParseRecord(raw string) (*Record, error) {
 			}
 		case "rua":
 			// Reject duplicate rua tags for deterministic behavior
-			if len(d.AggregateReportURI) > 0 {
+			if sawRuaTag {
 				return nil, fmt.Errorf("duplicate 'rua' tag in DMARC record")
 			}
+			sawRuaTag = true
 			rawURIs := strings.Split(strings.TrimSpace(v), ",")
 			for _, uri := range rawURIs {
 				uri = strings.TrimSpace(uri)
@@ -270,9 +281,10 @@ func ParseRecord(raw string) (*Record, error) {
 			}
 		case "ruf":
 			// Reject duplicate ruf tags for deterministic behavior
-			if len(d.ForensicReportURI) > 0 {
+			if sawRufTag {
 				return nil, fmt.Errorf("duplicate 'ruf' tag in DMARC record")
 			}
+			sawRufTag = true
 			rawURIs := strings.Split(strings.TrimSpace(v), ",")
 			for _, uri := range rawURIs {
 				uri = strings.TrimSpace(uri)
