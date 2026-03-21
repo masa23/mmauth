@@ -3,6 +3,7 @@ package dmarc
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -82,7 +83,8 @@ type Record struct {
 // Per RFC 7489 Section 6.2 and 6.4.
 func parseReportURI(uri string) (*ReportURI, error) {
 	// Split on '!' which separates URI from size limit
-	parts := strings.Split(uri, "!")
+	// Use SplitN with limit 2 to detect and reject multiple '!' delimiters
+	parts := strings.SplitN(uri, "!", 2)
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("invalid report URI: %s", uri)
 	}
@@ -121,20 +123,28 @@ func parseReportURI(uri string) (*ReportURI, error) {
 		}
 
 		// Apply unit multiplier (powers of two per RFC 7489)
+		// Use uint64 for the shift operation to avoid overflow before final int64 conversion
+		var maxSize uint64
 		switch strings.ToLower(unit) {
 		case "":
-			result.MaxSize = int64(num)
+			maxSize = num
 		case "k":
-			result.MaxSize = int64(num << 10) // 2^10
+			maxSize = num << 10 // 2^10
 		case "m":
-			result.MaxSize = int64(num << 20) // 2^20
+			maxSize = num << 20 // 2^20
 		case "g":
-			result.MaxSize = int64(num << 30) // 2^30
+			maxSize = num << 30 // 2^30
 		case "t":
-			result.MaxSize = int64(num << 40) // 2^40
+			maxSize = num << 40 // 2^40
 		default:
 			return nil, fmt.Errorf("invalid size unit in URI (must be k/m/g/t): %s", uri)
 		}
+
+		// Check for overflow before converting to int64
+		if maxSize > math.MaxInt64 {
+			return nil, fmt.Errorf("size limit too large in URI: %s (max %d bytes)", uri, math.MaxInt64)
+		}
+		result.MaxSize = int64(maxSize)
 	}
 
 	if result.URI == "" {
@@ -232,6 +242,10 @@ func ParseRecord(raw string) (*Record, error) {
 				return nil, fmt.Errorf("invalid version: %s", d.Version)
 			}
 		case "rua":
+			// Reject duplicate rua tags for deterministic behavior
+			if len(d.AggregateReportURI) > 0 {
+				return nil, fmt.Errorf("duplicate 'rua' tag in DMARC record")
+			}
 			rawURIs := strings.Split(strings.TrimSpace(v), ",")
 			for _, uri := range rawURIs {
 				uri = strings.TrimSpace(uri)
@@ -255,6 +269,10 @@ func ParseRecord(raw string) (*Record, error) {
 				return nil, fmt.Errorf("invalid aspf value: %s", d.AlignmentSPF)
 			}
 		case "ruf":
+			// Reject duplicate ruf tags for deterministic behavior
+			if len(d.ForensicReportURI) > 0 {
+				return nil, fmt.Errorf("duplicate 'ruf' tag in DMARC record")
+			}
 			rawURIs := strings.Split(strings.TrimSpace(v), ",")
 			for _, uri := range rawURIs {
 				uri = strings.TrimSpace(uri)

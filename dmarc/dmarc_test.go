@@ -414,6 +414,16 @@ func TestParseReportURI(t *testing.T) {
 			uri:       "mailto:reports@example.com!abc",
 			wantError: true,
 		},
+		{
+			name:      "Invalid URI - multiple size delimiters",
+			uri:       "mailto:reports@example.com!50m!extra",
+			wantError: true,
+		},
+		{
+			name:      "Invalid size - overflow (too large for int64)",
+			uri:       "mailto:reports@example.com!10000000t", // 10,000,000 * 2^40 > MaxInt64 (max ~8,388,608t)
+			wantError: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -585,6 +595,48 @@ func TestParseRecord_URIWithSizeLimit(t *testing.T) {
 				if lastURI.MaxSize != tc.expectedRUFMaxSize {
 					t.Errorf("Last RUF MaxSize mismatch: expected %d, got %d", tc.expectedRUFMaxSize, lastURI.MaxSize)
 				}
+			}
+		})
+	}
+}
+
+func TestParseRecord_duplicateURITags(t *testing.T) {
+	// 重複するrua/rufタグはエラーにならなければならない
+	testCases := []struct {
+		name    string
+		record  string
+		wantErr bool
+	}{
+		{
+			name:    "Duplicate rua tags",
+			record:  "v=DMARC1; p=none; rua=mailto:reports1@example.com; rua=mailto:reports2@example.com;",
+			wantErr: true,
+		},
+		{
+			name:    "Duplicate ruf tags",
+			record:  "v=DMARC1; p=none; ruf=mailto:forensics1@example.com; ruf=mailto:forensics2@example.com;",
+			wantErr: true,
+		},
+		{
+			name:    "Valid - single rua tag",
+			record:  "v=DMARC1; p=none; rua=mailto:reports@example.com;",
+			wantErr: false,
+		},
+		{
+			name:    "Valid - single ruf tag",
+			record:  "v=DMARC1; p=none; ruf=mailto:forensics@example.com;",
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseRecord(tc.record)
+			if tc.wantErr && err == nil {
+				t.Errorf("Expected error but got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Errorf("Unexpected error: %v", err)
 			}
 		})
 	}
