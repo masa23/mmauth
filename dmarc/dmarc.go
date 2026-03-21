@@ -81,32 +81,36 @@ type Record struct {
 // Format: URI [ "!" 1*DIGIT [ "k" / "m" / "g" / "t" ] ]
 // Example: "mailto:reports@example.com!50m" -> 50 * 2^20 bytes
 // Per RFC 7489 Section 6.2 and 6.4.
-// Note: While '!' is a valid character in generic URIs (RFC 3986),
-// DMARC report URIs typically use mailto: or http/https schemes where '!' in the
-// URI portion is uncommon. For safety, we treat any size spec after the last '!'
-// that matches the pattern; if it doesn't match, we reject it to avoid silent errors.
+// Note: Multiple '!' characters are not allowed to avoid ambiguity in parsing.
+// If '!' is present, it is treated as the size delimiter and must be followed
+// by a valid size specification.
 func parseReportURI(uri string) (*ReportURI, error) {
 	// Check if URI contains only size specification (URI part is empty)
 	if strings.HasPrefix(uri, "!") {
 		return nil, fmt.Errorf("invalid report URI: %s (URI cannot start with '!')", uri)
 	}
 
-	// Find the last '!' which would separate URI from size limit
+	// Find the '!' delimiter which separates URI from size limit
+	// Multiple '!' delimiters are not allowed
 	lastExclamation := strings.LastIndex(uri, "!")
 
 	var uriPart string
 	var sizeSpec string
 
 	if lastExclamation != -1 {
-		// Check if there are multiple '!' characters (which would be ambiguous)
+		// Check if there are multiple '!' characters
+		// Multiple '!' delimiters are not allowed as they would be ambiguous
 		if strings.Index(uri, "!") != lastExclamation {
-			// Multiple '!' characters found - this is ambiguous and should be rejected
-			// since we can't determine which one is the actual size delimiter
 			return nil, fmt.Errorf("invalid report URI: %s (multiple '!' delimiters are not allowed)", uri)
 		}
 
 		sizeSpec = strings.TrimSpace(uri[lastExclamation+1:])
 		uriPart = uri[:lastExclamation]
+
+		// If a '!' delimiter was present, the post-'!' portion must not be empty/whitespace
+		if sizeSpec == "" {
+			return nil, fmt.Errorf("invalid report URI: %s (missing size limit after '!')", uri)
+		}
 	} else {
 		uriPart = uri
 		sizeSpec = ""
