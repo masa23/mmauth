@@ -81,23 +81,44 @@ type Record struct {
 // Format: URI [ "!" 1*DIGIT [ "k" / "m" / "g" / "t" ] ]
 // Example: "mailto:reports@example.com!50m" -> 50 * 2^20 bytes
 // Per RFC 7489 Section 6.2 and 6.4.
+// Note: While '!' is a valid character in generic URIs (RFC 3986),
+// DMARC report URIs typically use mailto: or http/https schemes where '!' in the
+// URI portion is uncommon. For safety, we treat any size spec after the last '!'
+// that matches the pattern; if it doesn't match, we reject it to avoid silent errors.
 func parseReportURI(uri string) (*ReportURI, error) {
-	// Split on '!' which separates URI from size limit
-	// Use SplitN with limit 2 so the second element (if present) holds the size spec
-	parts := strings.SplitN(uri, "!", 2)
+	// Check if URI contains only size specification (URI part is empty)
+	if strings.HasPrefix(uri, "!") {
+		return nil, fmt.Errorf("invalid report URI: %s (URI cannot start with '!')", uri)
+	}
+
+	// Find the last '!' which would separate URI from size limit
+	lastExclamation := strings.LastIndex(uri, "!")
+
+	var uriPart string
+	var sizeSpec string
+
+	if lastExclamation != -1 {
+		// Check if there are multiple '!' characters (which would be ambiguous)
+		if strings.Index(uri, "!") != lastExclamation {
+			// Multiple '!' characters found - this is ambiguous and should be rejected
+			// since we can't determine which one is the actual size delimiter
+			return nil, fmt.Errorf("invalid report URI: %s (multiple '!' delimiters are not allowed)", uri)
+		}
+
+		sizeSpec = strings.TrimSpace(uri[lastExclamation+1:])
+		uriPart = uri[:lastExclamation]
+	} else {
+		uriPart = uri
+		sizeSpec = ""
+	}
 
 	result := &ReportURI{
-		URI:     strings.TrimSpace(parts[0]),
+		URI:     strings.TrimSpace(uriPart),
 		MaxSize: 0, // No limit by default
 	}
 
 	// Parse size limit if present
-	if len(parts) > 1 {
-		sizeSpec := strings.TrimSpace(parts[1])
-		if sizeSpec == "" {
-			return nil, fmt.Errorf("invalid size specification in URI: %s", uri)
-		}
-
+	if sizeSpec != "" {
 		// Extract numeric part and unit without incremental concatenation
 		var numStr string
 		var unit string
@@ -107,6 +128,11 @@ func parseReportURI(uri string) (*ReportURI, error) {
 		}
 		numStr = sizeSpec[:i]
 		unit = sizeSpec[i:]
+
+		// Validate that we have at least one digit and a valid unit (if present)
+		if len(numStr) == 0 {
+			return nil, fmt.Errorf("invalid size specification in URI: %s (must start with digits)", uri)
+		}
 
 		// Parse the numeric value
 		num, err := strconv.ParseUint(numStr, 10, 64)
@@ -142,7 +168,7 @@ func parseReportURI(uri string) (*ReportURI, error) {
 			}
 			maxSize = num << 40 // 2^40
 		default:
-			return nil, fmt.Errorf("invalid size unit in URI (must be k/m/g/t): %s", uri)
+			return nil, fmt.Errorf("invalid size unit in URI: %s (must be k/m/g/t)", uri)
 		}
 
 		// Final check (redundant but kept as safety net)
@@ -325,11 +351,17 @@ func ParseRecord(raw string) (*Record, error) {
 			// rf: Format for message-specific failure reports
 			// Per RFC 7489 Section 6.3.8, only "afrf" is currently supported
 			formats := strings.Split(strings.TrimSpace(v), ":")
+			seenFormats := make(map[string]bool) // Track seen formats to prevent duplicates
 			for _, format := range formats {
 				format = strings.TrimSpace(format)
 				if format == "" {
 					continue
 				}
+				// Skip duplicates - values like "rf=afrf:afrf" should only produce one entry
+				if seenFormats[format] {
+					continue
+				}
+				seenFormats[format] = true
 				// Currently only "afrf" is supported - other values should be ignored
 				// per RFC 7489 Section 6.3.8
 				if ReportFormat(format) == ReportFormatAFRF {
