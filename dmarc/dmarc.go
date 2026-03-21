@@ -44,19 +44,104 @@ const (
 	PolicyReject     PolicyType = "reject"
 )
 
+// ReportFormat represents the format requested for message-specific failure reports.
+// Per RFC 7489 Section 6.3.8, only "afrf" is currently supported.
+type ReportFormat string
+
+const (
+	ReportFormatAFRF ReportFormat = "afrf" // Authentication Failure Reporting Format
+)
+
+// ReportURI represents a DMARC URI with an optional size limit.
+// Example: "mailto:reports@example.com!50m" (50 megabytes max)
+// Per RFC 7489 Section 6.2 and 6.4.
+type ReportURI struct {
+	URI     string // The report URI
+	MaxSize int64  // Maximum size in bytes (0 means no limit)
+}
+
 type Record struct {
-	AggregateReportURI []string        // rua Aggregate report URIs
+	AggregateReportURI []ReportURI     // rua Aggregate report URIs
 	AlignmentDKIM      AlignmentMode   // adkim DKIM alignment mode (r or s)
 	AlignmentSPF       AlignmentMode   // aspf SPF alignment mode (r or s)
-	ForensicReportURI  []string        // ruf Forensic report URIs (optional, deprecated)
+	ForensicReportURI  []ReportURI     // ruf Forensic report URIs (optional, deprecated)
 	FailureOptions     []FailureOption // fo Forensic reporting options (optional, deprecated)
 	Percent            int             // pct Percentage of messages to apply policy to
 	Policy             PolicyType      // p Policy (none, quarantine, reject)
+	ReportFormat       []ReportFormat  // rf Format for message-specific failure reports
 	ReportInterval     uint32          // ri Interval for aggregate reports (seconds)
 	SubdomainPolicy    PolicyType      // sp Subdomain policy
 	Version            string          // v DMARC version, must be "DMARC1"
 	isSubdomainPolicy  bool            // isSubdomainPolicy true if this is a subdomain policy
 	raw                string          // raw record
+}
+
+// parseReportURI parses a DMARC URI with optional size limit.
+// Format: URI [ "!" 1*DIGIT [ "k" / "m" / "g" / "t" ] ]
+// Example: "mailto:reports@example.com!50m" -> 50 * 2^20 bytes
+// Per RFC 7489 Section 6.2 and 6.4.
+func parseReportURI(uri string) (*ReportURI, error) {
+	// Split on '!' which separates URI from size limit
+	parts := strings.Split(uri, "!")
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("invalid report URI: %s", uri)
+	}
+
+	result := &ReportURI{
+		URI:     strings.TrimSpace(parts[0]),
+		MaxSize: 0, // No limit by default
+	}
+
+	// Parse size limit if present
+	if len(parts) > 1 {
+		sizeSpec := strings.TrimSpace(parts[1])
+		if sizeSpec == "" {
+			return nil, fmt.Errorf("invalid size specification in URI: %s", uri)
+		}
+
+		// Extract numeric part and unit
+		var numStr string
+		var unit string
+		for i, r := range sizeSpec {
+			if r >= '0' && r <= '9' {
+				numStr += string(r)
+			} else {
+				unit = sizeSpec[i:]
+				break
+			}
+		}
+		if unit == "" {
+			unit = sizeSpec[len(numStr):]
+		}
+
+		// Parse the numeric value
+		num, err := strconv.ParseUint(numStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid size number in URI: %s", uri)
+		}
+
+		// Apply unit multiplier (powers of two per RFC 7489)
+		switch strings.ToLower(unit) {
+		case "":
+			result.MaxSize = int64(num)
+		case "k":
+			result.MaxSize = int64(num << 10) // 2^10
+		case "m":
+			result.MaxSize = int64(num << 20) // 2^20
+		case "g":
+			result.MaxSize = int64(num << 30) // 2^30
+		case "t":
+			result.MaxSize = int64(num << 40) // 2^40
+		default:
+			return nil, fmt.Errorf("invalid size unit in URI (must be k/m/g/t): %s", uri)
+		}
+	}
+
+	if result.URI == "" {
+		return nil, fmt.Errorf("empty URI in report URI: %s", uri)
+	}
+
+	return result, nil
 }
 
 func getParentDomain(domain string) (string, error) {
@@ -148,10 +233,17 @@ func ParseRecord(raw string) (*Record, error) {
 			}
 		case "rua":
 			rawURIs := strings.Split(strings.TrimSpace(v), ",")
-			for i, uri := range rawURIs {
-				rawURIs[i] = strings.TrimSpace(uri)
+			for _, uri := range rawURIs {
+				uri = strings.TrimSpace(uri)
+				if uri == "" {
+					continue
+				}
+				parsed, err := parseReportURI(uri)
+				if err != nil {
+					return nil, fmt.Errorf("invalid rua URI: %w", err)
+				}
+				d.AggregateReportURI = append(d.AggregateReportURI, *parsed)
 			}
-			d.AggregateReportURI = rawURIs
 		case "adkim":
 			d.AlignmentDKIM = AlignmentMode(strings.TrimSpace(v))
 			if d.AlignmentDKIM != AlignmentRelaxed && d.AlignmentDKIM != AlignmentStrict {
@@ -164,10 +256,17 @@ func ParseRecord(raw string) (*Record, error) {
 			}
 		case "ruf":
 			rawURIs := strings.Split(strings.TrimSpace(v), ",")
-			for i, uri := range rawURIs {
-				rawURIs[i] = strings.TrimSpace(uri)
+			for _, uri := range rawURIs {
+				uri = strings.TrimSpace(uri)
+				if uri == "" {
+					continue
+				}
+				parsed, err := parseReportURI(uri)
+				if err != nil {
+					return nil, fmt.Errorf("invalid ruf URI: %w", err)
+				}
+				d.ForensicReportURI = append(d.ForensicReportURI, *parsed)
 			}
-			d.ForensicReportURI = rawURIs
 		case "fo":
 			fo := strings.Split(strings.TrimSpace(v), ":")
 			for _, f := range fo {
@@ -192,6 +291,23 @@ func ParseRecord(raw string) (*Record, error) {
 			if d.Policy != PolicyNone && d.Policy != PolicyQuarantine && d.Policy != PolicyReject {
 				return nil, fmt.Errorf("invalid p value: %s", d.Policy)
 			}
+		case "rf":
+			// rf: Format for message-specific failure reports
+			// Per RFC 7489 Section 6.3.8, only "afrf" is currently supported
+			formats := strings.Split(strings.TrimSpace(v), ":")
+			for _, format := range formats {
+				format = strings.TrimSpace(format)
+				if format == "" {
+					continue
+				}
+				// Currently only "afrf" is supported - other values should be ignored
+				// per RFC 7489 Section 6.3.8
+				if ReportFormat(format) == ReportFormatAFRF {
+					d.ReportFormat = append(d.ReportFormat, ReportFormatAFRF)
+				}
+				// Unknown formats are silently ignored per RFC 7489 Section 6.3:
+				// "A Mail Receiver observing a different value SHOULD ignore it or MAY ignore the entire DMARC record"
+			}
 		case "ri":
 			ri, err := strconv.Atoi(strings.TrimSpace(v))
 			if err != nil {
@@ -209,8 +325,13 @@ func ParseRecord(raw string) (*Record, error) {
 		}
 	}
 
+	// Validate required fields per RFC 7489 Section 6.3
 	if d.Version == "" {
 		return nil, fmt.Errorf("missing version tag in DMARC record")
+	}
+	// p tag is REQUIRED for policy records per RFC 7489 Section 6.3.7
+	if d.Policy == "" {
+		return nil, fmt.Errorf("missing required 'p' tag in DMARC record")
 	}
 
 	return &d, nil
