@@ -421,7 +421,7 @@ func TestParseReportURI(t *testing.T) {
 		},
 		{
 			name:      "Invalid size - overflow (too large for int64)",
-			uri:       "mailto:reports@example.com!10000000t", // 10,000,000 * 2^40 > MaxInt64 (max ~8,388,608t)
+			uri:       "mailto:reports@example.com!8388608t", // 8,388,608 * 2^40 > MaxInt64 (max 8,388,607t; 8,388,608t already overflows)
 			wantError: true,
 		},
 	}
