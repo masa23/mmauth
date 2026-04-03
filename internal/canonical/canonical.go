@@ -184,7 +184,7 @@ func (c *relaxedBodyCanonicalizer) Close() error {
 	var result []byte
 	if len(canonical) > 0 {
 		result = bytes.Join(canonical, []byte("\r\n"))
-		// RFC 6376 Section 3.4.4: 空でない body で CRLF が末尾にない場合のみ CRLF を追加
+		// RFC 6376 Section 3.4.4: 空でない body の場合は末尾に CRLF を追加
 		result = append(result, []byte("\r\n")...)
 	}
 	// 空の body の場合は何も書き込まない (0 バイト) - RFC 6376 Section 3.4.4 に従う
