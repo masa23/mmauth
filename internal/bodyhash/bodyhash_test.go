@@ -118,3 +118,55 @@ func TestBodyHash(t *testing.T) {
 		})
 	}
 }
+
+// 空の body のテスト
+func TestBodyHash_Empty(t *testing.T) {
+	testCases := []struct {
+		name             string
+		body             string
+		canonicalization canonical.Canonicalization
+		hashAlgo         crypto.Hash
+		want             string
+	}{
+		{
+			name:             "simple_sha256_empty",
+			body:             "",
+			canonicalization: canonical.Simple,
+			hashAlgo:         crypto.SHA256,
+			want:             "frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY=",
+		},
+		{
+			name:             "simple_sha1_empty",
+			body:             "",
+			canonicalization: canonical.Simple,
+			hashAlgo:         crypto.SHA1,
+			want:             "uoq1oCgLlTqpdDX/iUbLy7J1Wic=",
+		},
+		{
+			name:             "relaxed_sha256_empty",
+			body:             "",
+			canonicalization: canonical.Relaxed,
+			hashAlgo:         crypto.SHA256,
+			want:             "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+		},
+		{
+			name:             "relaxed_sha1_empty",
+			body:             "",
+			canonicalization: canonical.Relaxed,
+			hashAlgo:         crypto.SHA1,
+			want:             "2jmj7l5rSw0yVb/vlWAYkK/YBwk=",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			bh := NewBodyHash(tc.canonicalization, tc.hashAlgo, 0)
+			bh.Write([]byte(tc.body))
+			bh.Close()
+			got := bh.Get()
+			if got != tc.want {
+				t.Errorf("want %s, but got %s", tc.want, got)
+			}
+		})
+	}
+}
