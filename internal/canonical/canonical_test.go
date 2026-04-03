@@ -275,16 +275,12 @@ func TestRelaxedBody(t *testing.T) {
 		want string
 	}{
 		{
+			"\r\n",
 			"",
-			"\r\n",
-		},
-		{
-			"\r\n",
-			"\r\n",
 		},
 		{
 			"\r\n\r\n\r\n",
-			"\r\n",
+			"",
 		},
 		{
 			"Hey\r\n\r\n",
@@ -323,7 +319,6 @@ func TestRelaxedBody(t *testing.T) {
 			"Test\t\t\r\n",
 			"Test\r\n",
 		},
-		// RFC 4871 セクション 3.4.4 の要件に基づくテストケース
 		{
 			"Test ",
 			"Test\r\n",

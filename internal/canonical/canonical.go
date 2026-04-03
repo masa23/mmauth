@@ -8,7 +8,7 @@ import (
 
 const crlf = "\r\n"
 
-// シンプルとリラックスの2つの正規化アルゴリズムを定義します。
+// シンプルとリラックスの 2 つの正規化アルゴリズムを定義します。
 type Canonicalization string
 
 const (
@@ -22,9 +22,9 @@ func SimpleHeader(s string) string {
 }
 
 // unfoldHeader はヘッダ値の折り返しを解除する関数です。
-// RFC 5322によると、ヘッダの折り返しはCRLFとそれに続く空白文字(WSP)でのみ構成されます。
+// RFC 5322 によると、ヘッダの折り返しは CRLF とそれに続く空白文字 (WSP) でのみ構成されます。
 func unfoldHeader(s string) string {
-	// CRLF+WSPのシーケンスを削除（unfold）
+	// CRLF+WSP のシーケンスを削除（unfold）
 	for {
 		original := s
 		s = strings.ReplaceAll(s, "\r\n ", " ")
@@ -99,13 +99,13 @@ type simpleBodyCanonicalizer struct {
 }
 
 func (c *simpleBodyCanonicalizer) Write(b []byte) (int, error) {
-	// bufにデータを追加
+	// buf にデータを追加
 	c.buf = append(c.buf, b...)
 	return len(b), nil
 }
 
 func (c *simpleBodyCanonicalizer) Close() error {
-	// CRLFを修正
+	// CRLF を修正
 	fixed := c.crlfFixer.Fix(c.buf)
 
 	// 末尾の空行を削除
@@ -113,7 +113,7 @@ func (c *simpleBodyCanonicalizer) Close() error {
 		fixed = fixed[:len(fixed)-2]
 	}
 
-	// 末尾にCRLFを追加
+	// 末尾に CRLF を追加
 	fixed = append(fixed, []byte(crlf)...)
 
 	// データを書き込む
@@ -136,24 +136,19 @@ type relaxedBodyCanonicalizer struct {
 }
 
 func (c *relaxedBodyCanonicalizer) Write(b []byte) (int, error) {
-	// bufにデータを追加
+	// buf にデータを追加
 	c.buf = append(c.buf, b...)
 	return len(b), nil
 }
 
 func (c *relaxedBodyCanonicalizer) Close() error {
-	// CRLFを修正
+	// CRLF を修正
 	fixed := c.crlfFixer.Fix(c.buf)
 
 	// バイトスライスを\r\nで分割して行のスライスを作成
 	lines := bytes.Split(fixed, []byte("\r\n"))
 
-	// 最後の空行を削除（スペースやタブのみの行も含む）
-	for len(lines) > 0 && len(bytes.TrimSpace(lines[len(lines)-1])) == 0 {
-		lines = lines[:len(lines)-1]
-	}
-
-	// 各行を処理
+	// 各行を処理（RFC 6376 Section 3.4.4 ステップ a）
 	var canonical [][]byte
 	for _, line := range lines {
 		// 行末の空白を削除
@@ -179,15 +174,26 @@ func (c *relaxedBodyCanonicalizer) Close() error {
 		canonical = append(canonical, compressedLine)
 	}
 
+	// 最後の空行を削除（RFC 6376 Section 3.4.4 ステップ b）
+	// 空行とは、行終端子を除去した後に長さがゼロの行のこと（RFC 6376 Section 3.4.3）
+	for len(canonical) > 0 && len(canonical[len(canonical)-1]) == 0 {
+		canonical = canonical[:len(canonical)-1]
+	}
+
 	// 結果を結合
-	result := bytes.Join(canonical, []byte("\r\n"))
+	var result []byte
+	if len(canonical) > 0 {
+		result = bytes.Join(canonical, []byte("\r\n"))
+		// RFC 6376 Section 3.4.4: 空でない body の場合は末尾に CRLF を追加
+		result = append(result, []byte("\r\n")...)
+	}
+	// 空の body の場合は何も書き込まない (0 バイト) - RFC 6376 Section 3.4.4 に従う
 
-	// 末尾にCRLFを追加
-	result = append(result, []byte("\r\n")...)
-
-	// データを書き込む
-	if _, err := c.w.Write(result); err != nil {
-		return err
+	// データを書き込む (空の body の場合は何も書き込まない)
+	if len(result) > 0 {
+		if _, err := c.w.Write(result); err != nil {
+			return err
+		}
 	}
 
 	return nil
