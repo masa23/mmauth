@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.0.8](https://github.com/masa23/mmauth/compare/v1.0.7...v1.0.8) - 2026-04-03
+- Authenticationの結果を配列で返す仕組みを追加 by @masa23 in https://github.com/masa23/mmauth/pull/19
+- DMARCのRFC対応を修正 by @masa23 in https://github.com/masa23/mmauth/pull/21
+- relaxedにおいてBodyが空の場合のCanonicalのミスを修正 by @masa23 in https://github.com/masa23/mmauth/pull/23
+
 ## [v1.0.7](https://github.com/masa23/mmauth/compare/v1.0.6...v1.0.7) - 2026-02-25
 - domainkeyパッケージをRFC準拠漏れを修正 by @masa23 in https://github.com/masa23/mmauth/pull/17
 
