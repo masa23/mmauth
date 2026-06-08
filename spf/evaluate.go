@@ -175,9 +175,9 @@ func (r *Record) handleRedirectModifier(current *Result, ip net.IP, domain, send
 		return current
 	}
 
-	// RFC 7208 Section 6.1: redirect is only evaluated if all mechanisms fail to match.
-	// If a mechanism already matched (result != Neutral), processing ended there.
-	if current.Status != Neutral {
+	// RFC 7208 Section 6.1: redirect is only evaluated if no mechanisms matched.
+	// A mechanism can legitimately return Neutral (e.g. "?a"), so don't key off Status alone.
+	if current.Status != Neutral || current.Reason != "no mechanism matched" {
 		return current
 	}
 
