@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.0.9](https://github.com/masa23/mmauth/compare/v1.0.8...v1.0.9) - 2026-06-08
+
+- SPF: redirect をメカニズム非マッチ時のみ評価するよう修正 by @masa23 in https://github.com/masa23/mmauth/pull/24
+
 ## [v1.0.8](https://github.com/masa23/mmauth/compare/v1.0.7...v1.0.8) - 2026-04-03
 - Authenticationの結果を配列で返す仕組みを追加 by @masa23 in https://github.com/masa23/mmauth/pull/19
 - DMARCのRFC対応を修正 by @masa23 in https://github.com/masa23/mmauth/pull/21
