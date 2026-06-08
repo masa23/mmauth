@@ -175,7 +175,14 @@ func (r *Record) handleRedirectModifier(current *Result, ip net.IP, domain, send
 		return current
 	}
 
-	// RFC 7208: レコード内にallがある場合、redirectは無視する
+	// RFC 7208 Section 6.1: redirect is only evaluated if all mechanisms fail to match.
+	// If a mechanism already matched (result != Neutral), processing ended there.
+	if current.Status != Neutral {
+		return current
+	}
+
+	// RFC 7208 Section 6.1: redirect MUST be ignored if there is an "all" mechanism anywhere in the record.
+	// (This check is redundant with the Neutral check above, but kept for clarity and edge cases.)
 	if r.AllExists {
 		return current
 	}
