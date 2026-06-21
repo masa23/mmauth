@@ -577,7 +577,6 @@ func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) erro
 
 	if len(domainKey.HashAlgo) > 0 {
 		want := domainkey.HashAlgoSHA256
-		legacyWant := domainkey.HashAlgo(d.Algorithm)
 		switch d.Algorithm {
 		case SignatureAlgorithmRSA_SHA1:
 			want = domainkey.HashAlgoSHA1
@@ -586,7 +585,7 @@ func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) erro
 		}
 		allowed := false
 		for _, algo := range domainKey.HashAlgo {
-			if algo == want || algo == legacyWant {
+			if algo == want {
 				allowed = true
 				break
 			}
@@ -596,16 +595,18 @@ func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) erro
 		}
 	}
 
-	if domainKey.KeyType != "" {
-		switch d.Algorithm {
-		case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
-			if domainKey.KeyType != domainkey.KeyTypeRSA {
-				return fmt.Errorf("signature key type is not allowed by domain key")
-			}
-		case SignatureAlgorithmED25519_SHA256:
-			if domainKey.KeyType != domainkey.KeyTypeED25519 {
-				return fmt.Errorf("signature key type is not allowed by domain key")
-			}
+	keyType := domainKey.KeyType
+	if keyType == "" {
+		keyType = domainkey.KeyTypeRSA
+	}
+	switch d.Algorithm {
+	case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+		if keyType != domainkey.KeyTypeRSA {
+			return fmt.Errorf("signature key type is not allowed by domain key")
+		}
+	case SignatureAlgorithmED25519_SHA256:
+		if keyType != domainkey.KeyTypeED25519 {
+			return fmt.Errorf("signature key type is not allowed by domain key")
 		}
 	}
 

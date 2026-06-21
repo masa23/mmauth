@@ -359,6 +359,7 @@ func TestVerifyRejectsDomainKeyPolicyMismatch(t *testing.T) {
 		name      string
 		signature *Signature
 		key       domainkey.DomainKey
+		wantErr   string
 	}{
 		{
 			name: "hash algorithm not allowed",
@@ -372,6 +373,7 @@ func TestVerifyRejectsDomainKeyPolicyMismatch(t *testing.T) {
 			key: domainkey.DomainKey{
 				HashAlgo: []domainkey.HashAlgo{domainkey.HashAlgoSHA1},
 			},
+			wantErr: "signature hash algorithm is not allowed by domain key",
 		},
 		{
 			name: "key type not allowed",
@@ -385,6 +387,19 @@ func TestVerifyRejectsDomainKeyPolicyMismatch(t *testing.T) {
 			key: domainkey.DomainKey{
 				KeyType: domainkey.KeyTypeRSA,
 			},
+			wantErr: "signature key type is not allowed by domain key",
+		},
+		{
+			name: "empty key type defaults to rsa",
+			signature: &Signature{
+				Algorithm: SignatureAlgorithmED25519_SHA256,
+				Domain:    "example.com",
+				Identity:  "user@example.com",
+				Version:   1,
+				raw:       "DKIM-Signature: v=1; a=ed25519-sha256; d=example.com; s=selector; h=from; bh=; b=",
+			},
+			key:     domainkey.DomainKey{},
+			wantErr: "signature key type is not allowed by domain key",
 		},
 		{
 			name: "strict identity domain",
@@ -398,6 +413,7 @@ func TestVerifyRejectsDomainKeyPolicyMismatch(t *testing.T) {
 			key: domainkey.DomainKey{
 				SelectorFlags: []domainkey.SelectorFlags{domainkey.SelectorFlagsStrictDomain},
 			},
+			wantErr: "identity domain is not allowed by strict domain key",
 		},
 	}
 
@@ -409,6 +425,12 @@ func TestVerifyRejectsDomainKeyPolicyMismatch(t *testing.T) {
 			}
 			if tt.signature.VerifyResult.Status() != VerifyStatusPermErr {
 				t.Fatalf("expected permerror, got %s", tt.signature.VerifyResult.Status())
+			}
+			if tt.signature.VerifyResult.Error() == nil {
+				t.Fatal("expected verify error")
+			}
+			if tt.signature.VerifyResult.Error().Error() != tt.wantErr {
+				t.Fatalf("expected error %q, got %q", tt.wantErr, tt.signature.VerifyResult.Error().Error())
 			}
 		})
 	}
@@ -528,7 +550,7 @@ func TestVerify(t *testing.T) {
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
 			domainKey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
 				KeyType:   "rsa",
 				PublicKey: publicKeyB64,
 			},
@@ -567,7 +589,7 @@ func TestVerify(t *testing.T) {
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
 			domainKey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
 				KeyType:   "rsa",
 				PublicKey: publicKeyB64,
 			},
@@ -606,7 +628,7 @@ func TestVerify(t *testing.T) {
 				"Message-Id: <20240203233642.F020.87DC113@example.com>\r\n",
 			},
 			domainKey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
 				KeyType:   "rsa",
 				PublicKey: publicKeyB64,
 			},
