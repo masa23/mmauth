@@ -171,6 +171,32 @@ func TestLookupRecord(t *testing.T) {
 			},
 			wantErr: ErrNoRecordFound,
 		},
+		{
+			domain: "example.jp",
+			want: &Record{
+				Version: "DMARC1",
+				Policy:  "reject",
+				raw:     "v=DMARC1; p=reject;",
+			},
+			resolver: func(name string) ([]string, error) {
+				if name == "_dmarc.example.jp" {
+					return []string{"not a dmarc record", "v=DMARC1; p=reject;"}, nil
+				}
+				return nil, &net.DNSError{IsNotFound: true}
+			},
+			wantErr: nil,
+		},
+		{
+			domain: "example.jp",
+			want:   nil,
+			resolver: func(name string) ([]string, error) {
+				if name == "_dmarc.example.jp" {
+					return []string{"v=DMARC1; p=none;", "v=DMARC1; p=reject;"}, nil
+				}
+				return nil, &net.DNSError{IsNotFound: true}
+			},
+			wantErr: ErrMultipleRecords,
+		},
 	}
 
 	for _, tc := range testCases {

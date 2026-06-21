@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"strings"
 	"testing"
 
 	"github.com/masa23/mmauth/domainkey"
@@ -318,6 +319,96 @@ func TestParseDKIMSignature(t *testing.T) {
 			}
 			if actual.canonnAndAlgo.HashAlgo != tc.expected.canonnAndAlgo.HashAlgo {
 				t.Errorf("want %v, but got %v", tc.expected.canonnAndAlgo.HashAlgo, actual.canonnAndAlgo.HashAlgo)
+			}
+		})
+	}
+}
+
+func TestSignatureStringIncludesOptionalTags(t *testing.T) {
+	sig := &Signature{
+		Algorithm:           SignatureAlgorithmRSA_SHA256,
+		BodyHash:            "bodyhash",
+		Canonicalization:    "relaxed/relaxed",
+		Domain:              "example.com",
+		Headers:             "from:to",
+		Identity:            "user@example.com",
+		Limit:               123,
+		QueryType:           "dns/txt",
+		Selector:            "selector",
+		Timestamp:           1700000000,
+		Version:             1,
+		SignatureExpiration: 1700003600,
+		Signature:           "signature",
+	}
+
+	got := sig.String()
+	for _, want := range []string{
+		"i=user@example.com;",
+		"l=123;",
+		"q=dns/txt;",
+		"x=1700003600;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected signature string to contain %q, got %s", want, got)
+		}
+	}
+}
+
+func TestVerifyRejectsDomainKeyPolicyMismatch(t *testing.T) {
+	tests := []struct {
+		name      string
+		signature *Signature
+		key       domainkey.DomainKey
+	}{
+		{
+			name: "hash algorithm not allowed",
+			signature: &Signature{
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Domain:    "example.com",
+				Identity:  "user@example.com",
+				Version:   1,
+				raw:       "DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector; h=from; bh=; b=",
+			},
+			key: domainkey.DomainKey{
+				HashAlgo: []domainkey.HashAlgo{domainkey.HashAlgoSHA1},
+			},
+		},
+		{
+			name: "key type not allowed",
+			signature: &Signature{
+				Algorithm: SignatureAlgorithmED25519_SHA256,
+				Domain:    "example.com",
+				Identity:  "user@example.com",
+				Version:   1,
+				raw:       "DKIM-Signature: v=1; a=ed25519-sha256; d=example.com; s=selector; h=from; bh=; b=",
+			},
+			key: domainkey.DomainKey{
+				KeyType: domainkey.KeyTypeRSA,
+			},
+		},
+		{
+			name: "strict identity domain",
+			signature: &Signature{
+				Algorithm: SignatureAlgorithmRSA_SHA256,
+				Domain:    "example.com",
+				Identity:  "user@sub.example.com",
+				Version:   1,
+				raw:       "DKIM-Signature: v=1; a=rsa-sha256; d=example.com; i=user@sub.example.com; s=selector; h=from; bh=; b=",
+			},
+			key: domainkey.DomainKey{
+				SelectorFlags: []domainkey.SelectorFlags{domainkey.SelectorFlagsStrictDomain},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.signature.Verify(nil, "", &tt.key)
+			if tt.signature.VerifyResult == nil {
+				t.Fatal("expected verify result")
+			}
+			if tt.signature.VerifyResult.Status() != VerifyStatusPermErr {
+				t.Fatalf("expected permerror, got %s", tt.signature.VerifyResult.Status())
 			}
 		})
 	}

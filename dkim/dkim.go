@@ -96,14 +96,30 @@ func (ds *Signature) GetCanonicalizationAndAlgorithm() *CanonicalizationAndAlgor
 }
 
 func (ds *Signature) String() string {
+	var optional []string
+	if ds.Identity != "" {
+		optional = append(optional, fmt.Sprintf("        i=%s;\r\n", ds.Identity))
+	}
+	if ds.Limit > 0 {
+		optional = append(optional, fmt.Sprintf("        l=%d;\r\n", ds.Limit))
+	}
+	if ds.QueryType != "" {
+		optional = append(optional, fmt.Sprintf("        q=%s;\r\n", ds.QueryType))
+	}
+	if ds.SignatureExpiration > 0 {
+		optional = append(optional, fmt.Sprintf("        x=%d;\r\n", ds.SignatureExpiration))
+	}
+
 	return fmt.Sprintf("a=%s; bh=%s;\r\n"+
 		"        c=%s; d=%s;\r\n"+
 		"        h=%s;\r\n"+
+		"%s"+
 		"        s=%s; t=%d; v=%d;\r\n"+
 		"        b=%s",
 		ds.Algorithm, ds.BodyHash,
 		ds.Canonicalization, ds.Domain,
 		ds.Headers,
+		strings.Join(optional, ""),
 		ds.Selector, ds.Timestamp, ds.Version,
 		header.WrapSignatureWithBreaks(ds.Signature),
 	)
@@ -408,6 +424,16 @@ func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domain
 		return
 	}
 
+	if err := d.validateDomainKeyPolicy(domainKey); err != nil {
+		d.VerifyResult = &VerifyResult{
+			status:    VerifyStatusPermErr,
+			err:       err,
+			msg:       err.Error() + testFlagMsg,
+			domainKey: domainKey,
+		}
+		return
+	}
+
 	// expireを検証 (RFC 6376要件)
 	// TimestampとSignatureExpirationがセットされてない場合は検証しない
 	if d.SignatureExpiration != 0 {
@@ -542,6 +568,61 @@ func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domain
 		msg:       "good signature" + testFlagMsg,
 		domainKey: domainKey,
 	}
+}
+
+func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) error {
+	if domainKey == nil {
+		return nil
+	}
+
+	if len(domainKey.HashAlgo) > 0 {
+		want := domainkey.HashAlgoSHA256
+		legacyWant := domainkey.HashAlgo(d.Algorithm)
+		switch d.Algorithm {
+		case SignatureAlgorithmRSA_SHA1:
+			want = domainkey.HashAlgoSHA1
+		case SignatureAlgorithmRSA_SHA256, SignatureAlgorithmED25519_SHA256:
+			want = domainkey.HashAlgoSHA256
+		}
+		allowed := false
+		for _, algo := range domainKey.HashAlgo {
+			if algo == want || algo == legacyWant {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("signature hash algorithm is not allowed by domain key")
+		}
+	}
+
+	if domainKey.KeyType != "" {
+		switch d.Algorithm {
+		case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+			if domainKey.KeyType != domainkey.KeyTypeRSA {
+				return fmt.Errorf("signature key type is not allowed by domain key")
+			}
+		case SignatureAlgorithmED25519_SHA256:
+			if domainKey.KeyType != domainkey.KeyTypeED25519 {
+				return fmt.Errorf("signature key type is not allowed by domain key")
+			}
+		}
+	}
+
+	for _, flag := range domainKey.SelectorFlags {
+		if flag != domainkey.SelectorFlagsStrictDomain {
+			continue
+		}
+		identityDomain := d.Domain
+		if atIndex := strings.LastIndex(d.Identity, "@"); atIndex != -1 {
+			identityDomain = d.Identity[atIndex+1:]
+		}
+		if !strings.EqualFold(identityDomain, d.Domain) {
+			return fmt.Errorf("identity domain is not allowed by strict domain key")
+		}
+	}
+
+	return nil
 }
 
 func hashAlgo(algo SignatureAlgorithm) crypto.Hash {

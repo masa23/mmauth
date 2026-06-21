@@ -75,6 +75,18 @@ func TestGetARCChainValidationResult(t *testing.T) {
 	}
 }
 
+func TestGetVerifyResultHandlesUnverifiedSignature(t *testing.T) {
+	var sigs Signatures
+	sigs.GetInstance(1)
+
+	if got := sigs.GetVerifyResult(); got != VerifyStatusNone {
+		t.Fatalf("expected none for unverified ARC signature, got %s", got)
+	}
+	if got := sigs.GetVerifyResultString(); got != "arc=none" {
+		t.Fatalf("expected arc=none for unverified ARC signature, got %s", got)
+	}
+}
+
 func TestParseARCHeaders(t *testing.T) {
 	testCases := []struct {
 		name      string

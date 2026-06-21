@@ -273,7 +273,16 @@ func (m *MMAuth) Close() error {
 	err := m.pw.Close()
 	m.pclose = true
 	<-m.done
-	return err
+	if err != nil && m.err != nil {
+		return fmt.Errorf("failed to close pipe: %v; processing error: %w", err, m.err)
+	}
+	if err != nil {
+		return err
+	}
+	if m.err != nil {
+		return m.err
+	}
+	return nil
 }
 
 // 付与されているDKIM・ARCの署名検証を行う
