@@ -18,6 +18,9 @@ func (d *Signatures) GetResult() VerifyStatus {
 		return VerifyStatusNone
 	}
 	for _, sig := range *d {
+		if sig == nil || sig.VerifyResult == nil {
+			return VerifyStatusNone
+		}
 		if sig.VerifyResult.Status() != VerifyStatusPass {
 			return sig.VerifyResult.Status()
 		}

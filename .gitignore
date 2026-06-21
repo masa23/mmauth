@@ -1,2 +1,3 @@
 .vscode
 local
+.local/check/cmd/compare_auth/.venv

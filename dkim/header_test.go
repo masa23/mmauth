@@ -50,6 +50,13 @@ func TestGetResult(t *testing.T) {
 			signatures: nil,
 			expected:   VerifyStatusNone,
 		},
+		{
+			name: "Unverified Signature",
+			signatures: Signatures{
+				&Signature{},
+			},
+			expected: VerifyStatusNone,
+		},
 	}
 
 	for _, c := range cases {

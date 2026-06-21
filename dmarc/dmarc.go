@@ -19,6 +19,7 @@ var DefaultResolver TXTLookupFunc = net.LookupTXT
 var (
 	ErrNoRecordFound   = errors.New("no record found")
 	ErrDNSLookupFailed = errors.New("dns lookup failed")
+	ErrMultipleRecords = errors.New("multiple DMARC records found")
 )
 
 type AlignmentMode string
@@ -234,6 +235,15 @@ func LookupRecordWithSubdomainFallback(domain string) (*Record, error) {
 	}
 }
 
+func isDMARCRecord(raw string) bool {
+	firstTag, _, _ := strings.Cut(strings.TrimSpace(raw), ";")
+	key, value, ok := strings.Cut(firstTag, "=")
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(key), "v") && strings.TrimSpace(value) == "DMARC1"
+}
+
 func LookupRecord(domain string) (*Record, error) {
 	query := fmt.Sprintf("_dmarc.%s", domain)
 	res, err := DefaultResolver(query)
@@ -244,7 +254,16 @@ func LookupRecord(domain string) (*Record, error) {
 	} else if err != nil {
 		return nil, fmt.Errorf("dns lookup failed: %w", err)
 	}
+	var dmarcRecords []string
 	for _, v := range res {
+		if isDMARCRecord(v) {
+			dmarcRecords = append(dmarcRecords, v)
+		}
+	}
+	if len(dmarcRecords) > 1 {
+		return nil, ErrMultipleRecords
+	}
+	for _, v := range dmarcRecords {
 		d, err := ParseRecord(v)
 		if err != nil {
 			return nil, err

@@ -83,6 +83,16 @@ func Test_readHeader(t *testing.T) {
 	}
 }
 
+func TestMMAuthCloseReturnsParseError(t *testing.T) {
+	m := NewMMAuth()
+	if _, err := m.Write([]byte("header:value")); err != nil {
+		t.Fatalf("unexpected write error: %v", err)
+	}
+	if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
+		t.Fatalf("expected parse error from Close, got %v", err)
+	}
+}
+
 func Test_hashAlgo(t *testing.T) {
 	testCases := []struct {
 		name   string

@@ -52,7 +52,7 @@ func (s *Signatures) GetVerifyResultString() string {
 
 	// 最後のインスタンスの結果を取得
 	ah := s.GetInstance(max)
-	if ah == nil {
+	if ah == nil || ah.VerifyResult == nil {
 		return "arc=none"
 	}
 	return fmt.Sprintf("arc=%s (i=%d %s)", ah.VerifyResult.Status(), ah.GetInstanceNumber(), ah.VerifyResult.Message())
@@ -70,7 +70,7 @@ func (s *Signatures) GetVerifyResult() VerifyStatus {
 
 	// 最後のインスタンスの結果を取得
 	ah := s.GetInstance(max)
-	if ah == nil {
+	if ah == nil || ah.VerifyResult == nil {
 		return VerifyStatusNone
 	}
 	return ah.VerifyResult.Status()
