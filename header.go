@@ -54,11 +54,13 @@ type BodyCanonicalizationAndAlgorithm struct {
 	Body      Canonicalization
 	Algorithm crypto.Hash
 	Limit     int64
+	// LimitSet distinguishes explicit l=0 from an omitted body length.
+	LimitSet bool
 }
 
 func isCcanonicalizationBodyAndAlgorithm(c BodyCanonicalizationAndAlgorithm, can []BodyCanonicalizationAndAlgorithm) bool {
 	for _, v := range can {
-		if v.Body == c.Body && v.Algorithm == c.Algorithm && v.Limit == c.Limit {
+		if v.Body == c.Body && v.Algorithm == c.Algorithm && v.Limit == c.Limit && (v.Limit > 0 || v.LimitSet == c.LimitSet) {
 			return true
 		}
 	}

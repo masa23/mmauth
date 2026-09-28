@@ -3,7 +3,7 @@ package spf
 import (
 	"fmt"
 	"strings"
-	"time"
+	"unicode"
 )
 
 type Mechanism string
@@ -93,6 +93,20 @@ func isValidModifierName(name string) bool {
 func validateMacroSyntax(s string) error {
 	_, err := parseMacroString(s)
 	return err
+}
+
+// Validate without expanding macros: parsing must never perform DNS lookups.
+func validateDomainMacros(value string) error {
+	tokens, err := parseMacroString(value)
+	if err != nil {
+		return err
+	}
+	for _, tok := range tokens {
+		if tok.Kind == TokenMacro && strings.ContainsRune("crt", unicode.ToLower(tok.Macro.Letter)) {
+			return fmt.Errorf("macro %c only allowed in explanation text", tok.Macro.Letter)
+		}
+	}
+	return nil
 }
 
 // ParseRecord は SPF レコード文字列を Record 構造体に解析します。
@@ -226,36 +240,14 @@ func ParseRecord(record string) (*Record, *Result) {
 						return nil, &Result{Status: PermError, Reason: "exp= modifier value is not a valid domain-spec"}
 					}
 				}
-				// For exp= modifier, store the raw value and also pre-expand it with MacroPurposeDomainSpec
-				// to comply with pyspf test suite expectations.
-				if Modifier(name) == ModifierExp {
-					// Create a dummy context for macro expansion during parsing
-					// This is a workaround to satisfy the pyspf test suite.
-					dummyCtx := &MacroContext{
-						Sender:   "dummy@example.com",
-						Domain:   "example.com",
-						Helo:     "example.com",
-						Receiver: "example.com",
-						IP:       nil,
-						Now:      time.Now(),
-					}
-					resolver := &dnsResolverImpl{}
-					expandedValue, err := resolver.ReplaceMacroValues(value, *dummyCtx, MacroPurposeDomainSpec)
-					if err != nil {
-						return nil, &Result{Status: PermError, Reason: fmt.Sprintf("invalid %s: %v", name, err)}
-					}
-					rec.Modifiers = append(rec.Modifiers, ModifierEntry{
-						Modifier: Modifier(name),
-						Value:    expandedValue, // Store expanded value for compatibility
-					})
-					// exp=修飾子の値を記録（生の、未展開の状態）
-					rec.Exp = value
-				} else {
-					rec.Modifiers = append(rec.Modifiers, ModifierEntry{
-						Modifier: Modifier(name),
-						Value:    value, // Store raw value, no macro expansion
-					})
+				if err := validateDomainMacros(value); err != nil {
+					return nil, &Result{Status: PermError, Reason: fmt.Sprintf("invalid %s: %v", name, err)}
 				}
+				rec.Modifiers = append(rec.Modifiers, ModifierEntry{Modifier: Modifier(name), Value: value})
+				if Modifier(name) == ModifierExp {
+					rec.Exp = value
+				}
+
 			default:
 				// RFC 7208 6.3: 不明なメカニズムと修飾子は無視しなければなりません。
 				// ただし、不明な修飾子に無効なマクロ構文がある場合、

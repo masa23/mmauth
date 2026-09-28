@@ -1,7 +1,7 @@
 package canonical
 
 import (
-	"bytes"
+	"bufio"
 	"io"
 	"strings"
 )
@@ -92,126 +92,106 @@ func Header(s string, canonical Canonicalization) string {
 	return result
 }
 
-type simpleBodyCanonicalizer struct {
-	w         io.Writer
-	buf       []byte
-	crlfFixer crlfFixer
+// bodyCanonicalizer retains only deferred whitespace and line endings. The
+// buffer size is independent of both body size and the length of a single line.
+type bodyCanonicalizer struct {
+	w             *bufio.Writer
+	relaxed       bool
+	pendingCR     bool
+	pendingWSP    bool
+	pendingBreaks int64
+	hasContent    bool
+	closed        bool
+	err           error
 }
 
-func (c *simpleBodyCanonicalizer) Write(b []byte) (int, error) {
-	// buf にデータを追加
-	c.buf = append(c.buf, b...)
-	return len(b), nil
-}
-
-func (c *simpleBodyCanonicalizer) Close() error {
-	// CRLF を修正
-	fixed := c.crlfFixer.Fix(c.buf)
-
-	// 末尾の空行を削除
-	for len(fixed) >= 2 && fixed[len(fixed)-2] == '\r' && fixed[len(fixed)-1] == '\n' {
-		fixed = fixed[:len(fixed)-2]
+func (c *bodyCanonicalizer) data(ch byte) error {
+	if c.relaxed && (ch == ' ' || ch == '\t') {
+		c.pendingWSP = true
+		return nil
 	}
-
-	// 末尾に CRLF を追加
-	fixed = append(fixed, []byte(crlf)...)
-
-	// データを書き込む
-	if _, err := c.w.Write(fixed); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// ボディをシンプル正規化する関数です。
-func SimpleBody(w io.Writer) io.WriteCloser {
-	return &simpleBodyCanonicalizer{w: w}
-}
-
-type relaxedBodyCanonicalizer struct {
-	w         io.Writer
-	buf       []byte
-	crlfFixer crlfFixer
-}
-
-func (c *relaxedBodyCanonicalizer) Write(b []byte) (int, error) {
-	// buf にデータを追加
-	c.buf = append(c.buf, b...)
-	return len(b), nil
-}
-
-func (c *relaxedBodyCanonicalizer) Close() error {
-	// CRLF を修正
-	fixed := c.crlfFixer.Fix(c.buf)
-
-	// バイトスライスを\r\nで分割して行のスライスを作成
-	lines := bytes.Split(fixed, []byte("\r\n"))
-
-	// 各行を処理（RFC 6376 Section 3.4.4 ステップ a）
-	var canonical [][]byte
-	for _, line := range lines {
-		// 行末の空白を削除
-		for len(line) > 0 && (line[len(line)-1] == ' ' || line[len(line)-1] == '\t') {
-			line = line[:len(line)-1]
-		}
-
-		// 行内の連続する空白を単一のスペースに圧縮
-		var compressedLine []byte
-		wsp := false
-		for _, ch := range line {
-			if ch == ' ' || ch == '\t' {
-				if !wsp {
-					compressedLine = append(compressedLine, ' ')
-					wsp = true
-				}
-			} else {
-				compressedLine = append(compressedLine, ch)
-				wsp = false
-			}
-		}
-
-		canonical = append(canonical, compressedLine)
-	}
-
-	// 最後の空行を削除（RFC 6376 Section 3.4.4 ステップ b）
-	// 空行とは、行終端子を除去した後に長さがゼロの行のこと（RFC 6376 Section 3.4.3）
-	for len(canonical) > 0 && len(canonical[len(canonical)-1]) == 0 {
-		canonical = canonical[:len(canonical)-1]
-	}
-
-	// 結果を結合
-	var result []byte
-	if len(canonical) > 0 {
-		result = bytes.Join(canonical, []byte("\r\n"))
-		// RFC 6376 Section 3.4.4: 空でない body の場合は末尾に CRLF を追加
-		result = append(result, []byte("\r\n")...)
-	}
-	// 空の body の場合は何も書き込まない (0 バイト) - RFC 6376 Section 3.4.4 に従う
-
-	// データを書き込む (空の body の場合は何も書き込まない)
-	if len(result) > 0 {
-		if _, err := c.w.Write(result); err != nil {
+	for c.pendingBreaks > 0 {
+		if _, err := c.w.WriteString(crlf); err != nil {
 			return err
 		}
+		c.pendingBreaks--
 	}
-
-	return nil
+	if c.pendingWSP {
+		if err := c.w.WriteByte(' '); err != nil {
+			return err
+		}
+		c.pendingWSP = false
+	}
+	c.hasContent = true
+	return c.w.WriteByte(ch)
 }
 
-// ボディをリラックス正規化する関数です。
+func (c *bodyCanonicalizer) Write(p []byte) (int, error) {
+	if c.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if c.err != nil {
+		return 0, c.err
+	}
+	for i, ch := range p {
+		if c.pendingCR {
+			c.pendingCR = false
+			if ch != '\n' {
+				if c.err = c.data('\r'); c.err != nil {
+					return i, c.err
+				}
+			}
+		}
+		switch ch {
+		case '\r':
+			c.pendingCR = true
+		case '\n':
+			c.pendingWSP = false
+			c.pendingBreaks++
+		default:
+			if c.err = c.data(ch); c.err != nil {
+				return i, c.err
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (c *bodyCanonicalizer) Close() error {
+	if c.closed {
+		return c.err
+	}
+	c.closed = true
+	if c.err != nil {
+		return c.err
+	}
+	if c.pendingCR {
+		if c.err = c.data('\r'); c.err != nil {
+			return c.err
+		}
+	}
+	// Trailing empty lines and relaxed trailing WSP are discarded. Simple
+	// always emits one CRLF, including for an empty body; relaxed empty is zero.
+	if c.hasContent || !c.relaxed {
+		_, c.err = c.w.WriteString(crlf)
+	}
+	if c.err == nil {
+		c.err = c.w.Flush()
+	}
+	return c.err
+}
+
+func SimpleBody(w io.Writer) io.WriteCloser {
+	return &bodyCanonicalizer{w: bufio.NewWriter(w)}
+}
+
 func RelaxedBody(w io.Writer) io.WriteCloser {
-	return &relaxedBodyCanonicalizer{w: w}
+	return &bodyCanonicalizer{w: bufio.NewWriter(w), relaxed: true}
 }
 
-// ボディの正規化を行う関数です。
-func Body(w io.Writer, canonical Canonicalization) io.WriteCloser {
-	switch canonical {
-	case Simple:
-		return SimpleBody(w)
-	case Relaxed:
+func Body(w io.Writer, canon Canonicalization) io.WriteCloser {
+	if canon == Relaxed {
 		return RelaxedBody(w)
-	default:
-		return SimpleBody(w)
 	}
+	return SimpleBody(w)
 }

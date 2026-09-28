@@ -158,6 +158,15 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		}
 		h = append(h, k)
 	}
+	fromSigned := false
+	for _, name := range h {
+		if strings.EqualFold(strings.TrimSpace(name), "from") {
+			fromSigned = true
+		}
+	}
+	if !fromSigned {
+		return fmt.Errorf("h= tag must include From")
+	}
 	h = header.RemoveDuplicates(h)
 	canHeader, _, err := header.ParseHeaderCanonicalization(ams.Canonicalization)
 	if err != nil {
@@ -234,10 +243,22 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 	}
 
+	fromSigned := false
+	for _, name := range strings.Split(ams.Headers, ":") {
+		if strings.EqualFold(strings.TrimSpace(name), "from") {
+			fromSigned = true
+		}
+	}
+	if !fromSigned {
+		return &VerifyResult{status: VerifyStatusPermErr, err: fmt.Errorf("h= tag must include From"), msg: "From is not signed"}
+	}
+
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
 		domKey, err := domainkey.LookupARCDomainKey(ams.Selector, ams.Domain)
-		if errors.Is(err, domainkey.ErrNoRecordFound) {
+		if errors.Is(err, domainkey.ErrInvalidVersion) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			return &VerifyResult{
 				status: VerifyStatusPermErr,
 				err:    fmt.Errorf("domain key is not found: %v", err),
@@ -251,6 +272,9 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 			}
 		}
 		domainKey = &domKey
+	}
+	if domainKey.Version != "" && domainKey.Version != "DKIM1" {
+		return &VerifyResult{status: VerifyStatusPermErr, err: domainkey.ErrInvalidVersion, msg: "invalid domain key version", domainKey: domainKey}
 	}
 
 	if ams.raw == "" {

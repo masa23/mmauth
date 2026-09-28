@@ -41,6 +41,7 @@ type CanonicalizationAndAlgorithm struct {
 	Body      Canonicalization
 	Algorithm SignatureAlgorithm
 	Limit     int64
+	LimitSet  bool
 	HashAlgo  crypto.Hash
 }
 
@@ -81,15 +82,21 @@ type Signature struct {
 	Headers             string             // h headers
 	Identity            string             // i identity
 	Limit               int64              // l limit length
+	LimitSet            bool               // true includes l=0; positive Limit works without this flag
 	QueryType           string             // q query
 	Selector            string             // s selector
 	Timestamp           int64              // t timestamp
 	Version             int                // v version
 	SignatureExpiration int64              // x signature expiration
 	VerifyResult        *VerifyResult
+	parseErr            error
 	raw                 string
 	canonnAndAlgo       *CanonicalizationAndAlgorithm
 }
+
+// ParseError returns the error retained by ParseDKIMHeaders for a malformed
+// signature. Constructed signing templates have no parse error.
+func (ds *Signature) ParseError() error { return ds.parseErr }
 
 func (ds *Signature) GetCanonicalizationAndAlgorithm() *CanonicalizationAndAlgorithm {
 	return ds.canonnAndAlgo
@@ -100,7 +107,7 @@ func (ds *Signature) String() string {
 	if ds.Identity != "" {
 		optional = append(optional, fmt.Sprintf("        i=%s;\r\n", ds.Identity))
 	}
-	if ds.Limit > 0 {
+	if ds.Limit > 0 || ds.LimitSet {
 		optional = append(optional, fmt.Sprintf("        l=%d;\r\n", ds.Limit))
 	}
 	if ds.QueryType != "" {
@@ -211,6 +218,7 @@ func ParseSignature(s string) (*Signature, error) {
 				return nil, fmt.Errorf("invalid limit for 'l' field: %s", value)
 			}
 			result.Limit = limit
+			result.LimitSet = true
 		case "q":
 			result.QueryType = value
 		case "s":
@@ -245,6 +253,7 @@ func ParseSignature(s string) (*Signature, error) {
 		Body:      Canonicalization(canBody),
 		Algorithm: result.Algorithm,
 		Limit:     result.Limit,
+		LimitSet:  result.LimitSet,
 		HashAlgo:  hashAlgo(result.Algorithm),
 	}
 
@@ -337,7 +346,7 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 	strippedHeader := dkimheader.StripBValueForSigning(dkimSigHeader)
 
 	// Build signing header set (raw), appending DKIM-Signature (with empty b=)
-	signingHeaders := append(append([]string{}, headers...), strippedHeader)
+	signingHeaders := append(header.ExtractHeadersDKIM(headers, h), strippedHeader)
 
 	// 適切なハッシュアルゴリズムを選択
 	hashAlgo := hashAlgo(d.Algorithm)
@@ -359,6 +368,11 @@ func (d *Signature) Verify(headers []string, bodyHash string, domainKey *domaink
 // domainKeyがnilの場合はLookupDomainKeyを実行
 // resolverがnilの場合はデフォルトのリゾルバーを使用
 func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domainKey *domainkey.DomainKey, resolver domainkey.TXTResolver) {
+	if d.parseErr != nil {
+		d.VerifyResult = &VerifyResult{status: VerifyStatusPermErr, err: d.parseErr, msg: "malformed signature"}
+		return
+	}
+
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
 		// リゾルバーがnilの場合はタイムアウト付きのデフォルトリゾルバーを作成
@@ -575,24 +589,12 @@ func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) erro
 		return nil
 	}
 
-	if len(domainKey.HashAlgo) > 0 {
-		want := domainkey.HashAlgoSHA256
-		switch d.Algorithm {
-		case SignatureAlgorithmRSA_SHA1:
-			want = domainkey.HashAlgoSHA1
-		case SignatureAlgorithmRSA_SHA256, SignatureAlgorithmED25519_SHA256:
-			want = domainkey.HashAlgoSHA256
-		}
-		allowed := false
-		for _, algo := range domainKey.HashAlgo {
-			if algo == want {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("signature hash algorithm is not allowed by domain key")
-		}
+	want := domainkey.HashAlgoSHA256
+	if d.Algorithm == SignatureAlgorithmRSA_SHA1 {
+		want = domainkey.HashAlgoSHA1
+	}
+	if !domainKey.AllowsHash(want) {
+		return fmt.Errorf("signature hash algorithm is not allowed by domain key")
 	}
 
 	keyType := domainKey.KeyType

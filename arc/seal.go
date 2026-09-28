@@ -12,6 +12,7 @@ import (
 
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/internal/dkimheader"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -26,6 +27,7 @@ type ARCSeal struct {
 	Timestamp       int64                 // t timestamp
 	raw             string
 	hashAlgo        crypto.Hash
+	invalid         bool
 }
 
 func (as *ARCSeal) Raw() string {
@@ -84,6 +86,7 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 		// Normalize key to lowercase for comparison to catch case-insensitive matches
 		if strings.ToLower(key) == "h" || strings.ToLower(key) == "bh" {
 			result.ChainValidation = ChainValidationResultFail
+			result.invalid = true
 			// エラーを返さずに、パースを継続
 			continue
 		}
@@ -134,6 +137,9 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 
 // ARC-Seal の署名
 func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
+	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {
+		return fmt.Errorf("invalid ARC instance")
+	}
 	// timestampを設定
 	if as.Timestamp == 0 {
 		as.Timestamp = time.Now().Unix()
@@ -156,6 +162,20 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 	// 署名対象ヘッダを構築する（RFC 8617: i=N の ARC-Seal は、i=1..N-1 の AAR/AMS/AS と、i=N の AAR/AMS と、b= を空にした AS(N) を署名する）
 	extractedHeaders := header.ExtractHeadersAll(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
 
+	firstInstance := 1
+	if as.ChainValidation == ChainValidationResultFail {
+		// RFC 8617 §5.1.2: only the newly created set is sealed when the
+		// incoming chain failed. Historical headers need not even parse.
+		firstInstance = as.InstanceNumber
+		var current []string
+		for _, raw := range extractedHeaders {
+			if n, ok := arcHeaderInstance(raw); ok && n == as.InstanceNumber {
+				current = append(current, raw)
+			}
+		}
+		extractedHeaders = current
+	}
+
 	// 既存のARCヘッダをパースして、署名対象の順序で並べ替える
 	ah, err := parseARCHeaders(extractedHeaders)
 	if err != nil {
@@ -163,7 +183,7 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 	}
 
 	var sortedHeaders []string
-	for i := 1; i < as.InstanceNumber; i++ {
+	for i := firstInstance; i < as.InstanceNumber; i++ {
 		arc := ah.getInstance(i)
 		// 既存インスタンスは AAR/AMS/AS が揃っている必要がある
 		if arc.arcAuthenticationResults == nil || arc.arcMessageSignature == nil || arc.arcSeal == nil {
@@ -200,8 +220,11 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 
 // ARC-Seal の検証
 func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *VerifyResult {
+	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {
+		return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("invalid ARC instance"), msg: "invalid ARC instance"}
+	}
 	// cv=fail の場合は即座に fail を返す
-	if as.ChainValidation == ChainValidationResultFail {
+	if as.invalid || as.ChainValidation == ChainValidationResultFail {
 		return &VerifyResult{
 			status:    VerifyStatusFail,
 			err:       fmt.Errorf("chain validation result is fail"),
@@ -213,7 +236,9 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
 		domKey, err := domainkey.LookupARCDomainKey(as.Selector, as.Domain)
-		if errors.Is(err, domainkey.ErrNoRecordFound) {
+		if errors.Is(err, domainkey.ErrInvalidVersion) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			return &VerifyResult{
 				status: VerifyStatusPermErr,
 				err:    fmt.Errorf("domain key is not found: %v", err),
@@ -228,6 +253,9 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 		}
 		domainKey = &domKey
 	}
+	if domainKey.Version != "" && domainKey.Version != "DKIM1" {
+		return &VerifyResult{status: VerifyStatusPermErr, err: domainkey.ErrInvalidVersion, msg: "invalid domain key version", domainKey: domainKey}
+	}
 
 	if as.raw == "" {
 		return &VerifyResult{
@@ -239,9 +267,24 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 
 	// ヘッダの抽出と連結
-	h := header.ExtractHeadersAll(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
-	h = append(h, header.DeleteSignature(as.raw))
-	h = arcHeaderSort(h)
+	sets, err := parseARCHeaders(headers)
+	if err != nil {
+		return &VerifyResult{status: VerifyStatusFail, err: err, msg: "invalid ARC headers"}
+	}
+	// Replace only the current seal with its empty-b= form; later sets did not
+	// exist when this seal was signed and must not contribute to its hash.
+	current := sets.getInstance(as.InstanceNumber)
+	placeholder := *as
+	placeholder.raw = dkimheader.StripBValueForSigning(as.raw)
+	current.arcSeal = &placeholder
+	var h []string
+	for i := 1; i <= as.InstanceNumber; i++ {
+		set := sets.getInstance(i)
+		if set.arcAuthenticationResults == nil || set.arcMessageSignature == nil || set.arcSeal == nil {
+			return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("missing ARC headers for instance %d", i), msg: "ARC set is incomplete"}
+		}
+		h = append(h, set.arcAuthenticationResults.raw, set.arcMessageSignature.raw, set.arcSeal.raw)
+	}
 
 	// ヘッダの正規化
 	var s string
@@ -381,21 +424,39 @@ func parseARCHeaders(headers []string) (*signatures, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-seal: %v", err)
 			}
+			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
+				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
+			}
 			as := sigs.getInstance(ret.InstanceNumber)
+			if as.arcSeal != nil {
+				return nil, fmt.Errorf("duplicate ARC header for instance %d", ret.InstanceNumber)
+			}
 			as.arcSeal = ret
 		case "arc-authentication-results":
 			ret, err := ParseARCAuthenticationResults(h)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
 			}
+			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
+				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
+			}
 			as := sigs.getInstance(ret.InstanceNumber)
+			if as.arcAuthenticationResults != nil {
+				return nil, fmt.Errorf("duplicate ARC header for instance %d", ret.InstanceNumber)
+			}
 			as.arcAuthenticationResults = ret
 		case "arc-message-signature":
 			ret, err := ParseARCMessageSignature(h)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-message-signature: %v", err)
 			}
+			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
+				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
+			}
 			as := sigs.getInstance(ret.InstanceNumber)
+			if as.arcMessageSignature != nil {
+				return nil, fmt.Errorf("duplicate ARC header for instance %d", ret.InstanceNumber)
+			}
 			as.arcMessageSignature = ret
 		}
 	}

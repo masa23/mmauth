@@ -2,6 +2,7 @@ package arc
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/masa23/mmauth/internal/header"
@@ -15,7 +16,7 @@ func (s *Signatures) GetInstance(i int) *Signature {
 		return nil
 	}
 	for _, sig := range *s {
-		if sig.instanceNumber == i {
+		if sig != nil && sig.instanceNumber == i {
 			return sig
 		}
 	}
@@ -33,163 +34,156 @@ func (s *Signatures) GetMaxInstance() int {
 	}
 	max := 0
 	for _, sig := range *s {
-		if sig.GetInstanceNumber() > max {
+		if sig != nil && sig.GetInstanceNumber() > max {
 			max = sig.GetInstanceNumber()
 		}
 	}
 	return max
 }
 
-// 最後のARCのVerify結果を文字列で取得する
+// GetVerifyResultString reports the validation status of the entire chain.
 func (s *Signatures) GetVerifyResultString() string {
-	if s == nil {
+	status := s.GetVerifyResult()
+	if status == VerifyStatusNone {
 		return "arc=none"
 	}
-	max := s.GetMaxInstance()
-	if max == 0 {
-		return "arc=none"
+	for _, sig := range *s {
+		if sig != nil && sig.parseErr != nil {
+			return "arc=fail (malformed ARC headers)"
+		}
 	}
-
-	// 最後のインスタンスの結果を取得
-	ah := s.GetInstance(max)
-	if ah == nil || ah.VerifyResult == nil {
-		return "arc=none"
-	}
-	return fmt.Sprintf("arc=%s (i=%d %s)", ah.VerifyResult.Status(), ah.GetInstanceNumber(), ah.VerifyResult.Message())
+	return fmt.Sprintf("arc=%s (i=%d)", status, s.GetMaxInstance())
 }
 
-// 最後のARCのVerify結果を取得する
+// GetVerifyResult requires all seals and the latest AMS to pass. A historical
+// AMS failure is expected after forwarding and does not invalidate the chain.
 func (s *Signatures) GetVerifyResult() VerifyStatus {
-	if s == nil {
+	if s == nil || len(*s) == 0 {
 		return VerifyStatusNone
+	}
+	for _, sig := range *s {
+		if sig != nil && sig.parseErr != nil {
+			return VerifyStatusFail
+		}
+	}
+	if err := s.validateStructure(true); err != nil {
+		return VerifyStatusFail
 	}
 	max := s.GetMaxInstance()
-	if max == 0 {
+	unverified := false
+	for _, sig := range *s {
+		if sig.sealResult == nil {
+			unverified = true
+		} else if sig.sealResult.Status() != VerifyStatusPass {
+			return VerifyStatusFail
+		}
+		if sig.instanceNumber == max {
+			if sig.messageResult == nil {
+				unverified = true
+			} else if sig.messageResult.Status() != VerifyStatusPass {
+				return VerifyStatusFail
+			}
+		}
+	}
+	if unverified {
 		return VerifyStatusNone
 	}
-
-	// 最後のインスタンスの結果を取得
-	ah := s.GetInstance(max)
-	if ah == nil || ah.VerifyResult == nil {
-		return VerifyStatusNone
-	}
-	return ah.VerifyResult.Status()
+	return VerifyStatusPass
 }
 
-// 既存のARC-SealのCV結果をチェックしarc.ChainValidationResultを返す
-// i=1がNone以外の場合はFail
-// それ以外のインスタンスがPassでなければFail
+// GetARCChainValidation returns none for a structurally valid, unverified chain.
+// Claimed cv= values alone are never treated as proof of a valid chain.
 func (s *Signatures) GetARCChainValidation() ChainValidationResult {
-	if s == nil {
-		return ChainValidationResultNone
-	}
-	max := s.GetMaxInstance()
-	// インスタンスがない場合はNone
-	if max == 0 {
-		return ChainValidationResultNone
-	}
-
-	// すべてのインスタンスが検証済みかを確認
-	allVerified := true
-	for i := 1; i <= max; i++ {
-		a := s.GetInstance(i)
-		if a == nil || a.GetVerifyResult() == nil {
-			allVerified = false
-			break
-		}
-	}
-
-	// すべてのインスタンスが検証済みの場合、検証結果に基づいて判定
-	if allVerified {
-		// 最大インスタンスから1まで降順にチェック
-		for i := max; i >= 1; i-- {
-			a := s.GetInstance(i)
-			result := a.GetVerifyResult()
-			// いずれかのインスタンスで検証が失敗した場合はFail
-			if result.Status() != VerifyStatusPass {
-				return ChainValidationResultFail
-			}
-		}
-		// すべてのインスタンスがPassの場合はPass
+	switch s.GetVerifyResult() {
+	case VerifyStatusPass:
 		return ChainValidationResultPass
+	case VerifyStatusNone:
+		return ChainValidationResultNone
+	default:
+		return ChainValidationResultFail
 	}
-
-	// 検証が完了していない場合は、既存のARC-SealのCV結果をチェック
-	for i := 1; i <= max; i++ {
-		a := s.GetInstance(i)
-		seal := a.GetARCSeal()
-		if i == 1 {
-			// 最初のインスタンスはnone以外許されない
-			if seal.ChainValidation == ChainValidationResultNone {
-				continue
-			}
-			return ChainValidationResultFail
-		}
-		// それ以外のインスタンスはPassでなければならない
-		if seal.ChainValidation != ChainValidationResultPass {
-			return ChainValidationResultFail
-		}
-	}
-	return ChainValidationResultPass
 }
 
-// ARCヘッダをパースする
+func (s *Signatures) validateStructure(checkCV bool) error {
+	if s == nil {
+		return nil
+	}
+	max := s.GetMaxInstance()
+	if len(*s) != max || max > 50 {
+		return fmt.Errorf("ARC instances must be continuous from 1 to at most 50")
+	}
+	seen := make(map[int]bool)
+	for _, sig := range *s {
+		if sig == nil || sig.instanceNumber < 1 || sig.instanceNumber > 50 {
+			return fmt.Errorf("invalid ARC instance")
+		}
+		if seen[sig.instanceNumber] {
+			return fmt.Errorf("duplicate ARC instance")
+		}
+		seen[sig.instanceNumber] = true
+		if sig.arcSeal == nil || sig.arcAuthenticationResults == nil || sig.arcMessageSignature == nil {
+			return fmt.Errorf("arc headers are missing")
+		}
+		if checkCV {
+			want := ChainValidationResultPass
+			if sig.instanceNumber == 1 {
+				want = ChainValidationResultNone
+			}
+			if sig.arcSeal.invalid || sig.arcSeal.ChainValidation != want {
+				return fmt.Errorf("invalid ARC cv at instance %d", sig.instanceNumber)
+			}
+		}
+	}
+	return nil
+}
+
+// ParseARCHeaders requires one AAR, AMS and AS per consecutive instance.
+// On error it returns a failed chain as well as the error, so callers that
+// continue other authentication checks cannot mistake malformed ARC for none.
+// The failed chain retains the largest recognizable instance in the 1..50 range;
+// it is a failure marker, not a partially usable set of ARC headers.
 func ParseARCHeaders(headers []string) (*Signatures, error) {
-	var sigs Signatures
-
-	for _, h := range headers {
-		k, _ := header.ParseHeaderField(h)
-		switch strings.ToLower(k) {
-		case "arc-seal":
-			ret, err := ParseARCSeal(h)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-seal: %v", err)
-			}
-			// インスタンス番号が50以上の場合はエラー
-			if ret.InstanceNumber > 50 {
-				return nil, fmt.Errorf("instance number is too large")
-			}
-			as := sigs.GetInstance(ret.InstanceNumber)
-			as.arcSeal = ret
-		case "arc-authentication-results":
-			ret, err := ParseARCAuthenticationResults(h)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
-			}
-			// インスタンス番号が50以上の場合はエラー
-			if ret.InstanceNumber > 50 {
-				return nil, fmt.Errorf("instance number is too large")
-			}
-			as := sigs.GetInstance(ret.InstanceNumber)
-			as.arcAuthenticationResults = ret
-		case "arc-message-signature":
-			ret, err := ParseARCMessageSignature(h)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-message-signature: %v", err)
-			}
-			// インスタンス番号が50以上の場合はエラー
-			if ret.InstanceNumber > 50 {
-				return nil, fmt.Errorf("instance number is too large")
-			}
-			as := sigs.GetInstance(ret.InstanceNumber)
-			as.arcMessageSignature = ret
-		}
+	parsed, err := parseARCHeaders(headers)
+	if err != nil {
+		return failedARCHeaders(headers, err), err
 	}
-
-	// インスタンスのチェック
-	for i := 1; i <= sigs.GetMaxInstance(); i++ {
-		// インスタンスが連続していない場合はエラー
-		ah := sigs.GetInstance(i)
-		if ah == nil {
-			return nil, fmt.Errorf("instance number is not continuous")
-		}
-		// ARC-Seal、ARC-Authentication-Results、ARC-Message-Signatureがない場合はエラー
-		if ah.arcSeal == nil || ah.arcAuthenticationResults == nil || ah.arcMessageSignature == nil {
-			return nil, fmt.Errorf("arc headers are missing")
-		}
+	sigs := Signatures(*parsed)
+	if err := sigs.validateStructure(false); err != nil {
+		return failedARCHeaders(headers, err), err
 	}
-
 	return &sigs, nil
+}
+
+// arcHeaderInstance reads only the instance tag, without requiring other tags
+// to parse. This lets failure sealing ignore malformed historical sets.
+func arcHeaderInstance(raw string) (int, bool) {
+	name, value := header.ParseHeaderField(raw)
+	switch strings.ToLower(name) {
+	case "arc-seal", "arc-message-signature", "arc-authentication-results":
+	default:
+		return 0, false
+	}
+	for _, field := range strings.Split(value, ";") {
+		key, value, ok := strings.Cut(field, "=")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "i") {
+			n, err := strconv.Atoi(header.StripWhiteSpace(value))
+			return n, err == nil
+		}
+	}
+	return 0, false
+}
+
+func failedARCHeaders(headers []string, err error) *Signatures {
+	max := 0
+	for _, raw := range headers {
+		if n, ok := arcHeaderInstance(raw); ok && n > max && n <= 50 {
+			max = n
+		}
+	}
+	return &Signatures{&Signature{
+		instanceNumber: max, parseErr: err,
+		VerifyResult: &VerifyResult{status: VerifyStatusFail, err: err, msg: "malformed ARC headers"},
+	}}
 }
 
 // ARCヘッダをSealで署名する順番にソートする

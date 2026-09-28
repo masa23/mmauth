@@ -213,14 +213,7 @@ func Test_arcHeaderSort(t *testing.T) {
 				"ARC-Authentication-Results: i=2;\r\n",
 				"ARC-Seal: i=2;\r\n",
 			},
-			want: []string{
-				"ARC-Authentication-Results: i=1;\r\n",
-				"ARC-Message-Signature: i=1;\r\n",
-				"ARC-Seal: i=1;\r\n",
-				"ARC-Authentication-Results: i=2;\r\n",
-				"ARC-Message-Signature: i=2;\r\n",
-				"ARC-Seal: i=2;\r\n",
-			},
+			want: nil, // duplicate ARC-Seal must not be silently overwritten
 		},
 	}
 
