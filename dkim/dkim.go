@@ -381,7 +381,10 @@ func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domain
 		}
 
 		domKey, err := domainkey.LookupDKIMDomainKeyWithResolver(d.Selector, d.Domain, resolver)
-		if errors.Is(err, domainkey.ErrNoRecordFound) {
+		if errors.Is(err, domainkey.ErrInvalidVersion) {
+			d.VerifyResult = &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+			return
+		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			d.VerifyResult = &VerifyResult{
 				status: VerifyStatusPermErr,
 				err:    fmt.Errorf("domain key is not found: %v", err),
@@ -587,6 +590,9 @@ func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domain
 func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) error {
 	if domainKey == nil {
 		return nil
+	}
+	if domainKey.Version != "" && domainKey.Version != "DKIM1" {
+		return domainkey.ErrInvalidVersion
 	}
 
 	want := domainkey.HashAlgoSHA256

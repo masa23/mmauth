@@ -68,6 +68,7 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 		return nil, fmt.Errorf("invalid header field")
 	}
 	fields := strings.Split(v, ";")
+	cvPresent := false
 
 	for _, field := range fields {
 		keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
@@ -124,11 +125,15 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 			}
 			result.Timestamp = timestamp
 		case "cv":
+			cvPresent = true
 			if !isChainValidationResult(value) {
 				return nil, fmt.Errorf("invalid chain validation result")
 			}
 			result.ChainValidation = ChainValidationResult(value)
 		}
+	}
+	if !cvPresent {
+		return nil, fmt.Errorf("ARC-Seal cv tag is missing")
 	}
 	result.hashAlgo = hashAlgo(result.Algorithm)
 
@@ -223,6 +228,9 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {
 		return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("invalid ARC instance"), msg: "invalid ARC instance"}
 	}
+	if !isChainValidationResult(string(as.ChainValidation)) {
+		return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("invalid ARC cv"), msg: "invalid ARC cv"}
+	}
 	// cv=fail の場合は即座に fail を返す
 	if as.invalid || as.ChainValidation == ChainValidationResultFail {
 		return &VerifyResult{
@@ -253,8 +261,8 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 		}
 		domainKey = &domKey
 	}
-	if domainKey.Version != "" && domainKey.Version != "DKIM1" {
-		return &VerifyResult{status: VerifyStatusPermErr, err: domainkey.ErrInvalidVersion, msg: "invalid domain key version", domainKey: domainKey}
+	if err := validateDomainKeyPolicy(domainKey, as.Algorithm); err != nil {
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: err.Error(), domainKey: domainKey}
 	}
 
 	if as.raw == "" {

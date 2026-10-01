@@ -273,8 +273,8 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 		domainKey = &domKey
 	}
-	if domainKey.Version != "" && domainKey.Version != "DKIM1" {
-		return &VerifyResult{status: VerifyStatusPermErr, err: domainkey.ErrInvalidVersion, msg: "invalid domain key version", domainKey: domainKey}
+	if err := validateDomainKeyPolicy(domainKey, ams.Algorithm); err != nil {
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: err.Error(), domainKey: domainKey}
 	}
 
 	if ams.raw == "" {

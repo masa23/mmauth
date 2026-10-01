@@ -153,3 +153,21 @@ func hashAlgo(algo SignatureAlgorithm) crypto.Hash {
 func base64Decode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
+
+// validateDomainKeyPolicy applies the same key restrictions to AS and AMS.
+func validateDomainKeyPolicy(key *domainkey.DomainKey, algorithm SignatureAlgorithm) error {
+	if key.Version != "" && key.Version != "DKIM1" {
+		return domainkey.ErrInvalidVersion
+	}
+	if !key.IsService(domainkey.ServiceTypeEmail) {
+		return fmt.Errorf("domain key service type is invalid")
+	}
+	want := domainkey.HashAlgoSHA256
+	if algorithm == SignatureAlgorithmRSA_SHA1 {
+		want = domainkey.HashAlgoSHA1
+	}
+	if !key.AllowsHash(want) {
+		return fmt.Errorf("signature hash algorithm is not allowed by domain key")
+	}
+	return nil
+}

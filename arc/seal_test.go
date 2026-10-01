@@ -175,12 +175,12 @@ func Test_arcHeaderSort(t *testing.T) {
 			input: []string{
 				"ARC-Authentication-Results: i=1;\r\n",
 				"ARC-Message-Signature: i=1;\r\n",
-				"ARC-Seal: i=1;\r\n",
+				"ARC-Seal: i=1; cv=none;\r\n",
 			},
 			want: []string{
 				"ARC-Authentication-Results: i=1;\r\n",
 				"ARC-Message-Signature: i=1;\r\n",
-				"ARC-Seal: i=1;\r\n",
+				"ARC-Seal: i=1; cv=none;\r\n",
 			},
 		},
 		{
@@ -188,30 +188,30 @@ func Test_arcHeaderSort(t *testing.T) {
 			input: []string{
 				"ARC-Authentication-Results: i=1;\r\n",
 				"ARC-Message-Signature: i=1;\r\n",
-				"ARC-Seal: i=1;\r\n",
+				"ARC-Seal: i=1; cv=none;\r\n",
 				"ARC-Authentication-Results: i=2;\r\n",
 				"ARC-Message-Signature: i=2;\r\n",
-				"ARC-Seal: i=2;\r\n",
+				"ARC-Seal: i=2; cv=pass;\r\n",
 			},
 			want: []string{
 				"ARC-Authentication-Results: i=1;\r\n",
 				"ARC-Message-Signature: i=1;\r\n",
-				"ARC-Seal: i=1;\r\n",
+				"ARC-Seal: i=1; cv=none;\r\n",
 				"ARC-Authentication-Results: i=2;\r\n",
 				"ARC-Message-Signature: i=2;\r\n",
-				"ARC-Seal: i=2;\r\n",
+				"ARC-Seal: i=2; cv=pass;\r\n",
 			},
 		},
 		{
 			name: "test3",
 			input: []string{
-				"ARC-Seal: i=1;\r\n",
+				"ARC-Seal: i=1; cv=none;\r\n",
 				"ARC-Message-Signature: i=2;\r\n",
 				"ARC-Message-Signature: i=1;\r\n",
 				"ARC-Authentication-Results: i=1;\r\n",
-				"ARC-Seal: i=1;\r\n",
+				"ARC-Seal: i=1; cv=none;\r\n",
 				"ARC-Authentication-Results: i=2;\r\n",
-				"ARC-Seal: i=2;\r\n",
+				"ARC-Seal: i=2; cv=pass;\r\n",
 			},
 			want: nil, // duplicate ARC-Seal must not be silently overwritten
 		},
@@ -262,7 +262,7 @@ func TestARCSealVerify(t *testing.T) {
 					"         vrgEwmI6O74ZZR9jWIuyGg==\r\n",
 			},
 			domainkey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"rsa-sha256"},
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
 				KeyType:   "rsa",
 				PublicKey: testKeys.getPublicKeyBase64("rsa"),
 			},
@@ -282,7 +282,7 @@ func TestARCSealVerify(t *testing.T) {
 					"         vvlarL7sMnQeZvXN92nPDw==\r\n",
 			},
 			domainkey: domainkey.DomainKey{
-				HashAlgo:  []domainkey.HashAlgo{"ed25519-sha256"},
+				HashAlgo:  []domainkey.HashAlgo{domainkey.HashAlgoSHA256},
 				KeyType:   "ed25519",
 				PublicKey: testKeys.getPublicKeyBase64("ed25519"),
 			},
