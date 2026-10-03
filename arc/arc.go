@@ -169,5 +169,19 @@ func validateDomainKeyPolicy(key *domainkey.DomainKey, algorithm SignatureAlgori
 	if !key.AllowsHash(want) {
 		return fmt.Errorf("signature hash algorithm is not allowed by domain key")
 	}
+	keyType := key.KeyType
+	if keyType == "" {
+		keyType = domainkey.KeyTypeRSA
+	}
+	switch algorithm {
+	case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+		if keyType != domainkey.KeyTypeRSA {
+			return fmt.Errorf("signature key type is not allowed by domain key")
+		}
+	case SignatureAlgorithmED25519_SHA256:
+		if keyType != domainkey.KeyTypeED25519 {
+			return fmt.Errorf("signature key type is not allowed by domain key")
+		}
+	}
 	return nil
 }
