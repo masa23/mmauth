@@ -73,6 +73,61 @@ func Test_readHeader(t *testing.T) {
 			},
 		},
 		{
+			name:   "header only field name boundaries",
+			input:  "!: first\r\n~: last\r\n",
+			expect: headers{"!: first\r\n", "~: last\r\n"},
+		},
+		{
+			name:   "header only obsolete whitespace before colon",
+			input:  "From \t: a@example.com\r\n",
+			expect: headers{"From \t: a@example.com\r\n"},
+		},
+		{
+			name:          "header only missing colon",
+			input:         "not-a-header\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only malformed last line",
+			input:         "From: a@example.com\r\nnot-a-header\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only colon in continuation",
+			input:         "not-a-header\r\n\tcontinued: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only empty field name",
+			input:         ": value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only whitespace in field name",
+			input:         "Bad Name: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only control in field name",
+			input:         "Bad\x00Name: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only DEL in field name",
+			input:         "Bad\x7fName: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only non-ASCII field name",
+			input:         "X-é: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only orphan continuation",
+			input:         "\torphan: value\r\n",
+			expectedError: true,
+		},
+		{
 			name:          "unterminated last header",
 			input:         "From: a@example.com\r\nSubject: hello",
 			expectedError: true,
@@ -130,12 +185,16 @@ func TestReadHeaderReadError(t *testing.T) {
 }
 
 func TestMMAuthCloseReturnsParseError(t *testing.T) {
-	m := NewMMAuth()
-	if _, err := m.Write([]byte("header:value")); err != nil {
-		t.Fatalf("unexpected write error: %v", err)
-	}
-	if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
-		t.Fatalf("expected parse error from Close, got %v", err)
+	for _, input := range []string{"header:value", "not-a-header\r\n", "From: a@example.com\r\nnot-a-header\r\n"} {
+		t.Run(input, func(t *testing.T) {
+			m := NewMMAuth()
+			if _, err := m.Write([]byte(input)); err != nil {
+				t.Fatalf("unexpected write error: %v", err)
+			}
+			if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
+				t.Fatalf("expected parse error from Close, got %v", err)
+			}
+		})
 	}
 }
 

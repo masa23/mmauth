@@ -22,6 +22,9 @@ func readHeader(r *bufio.Reader) (headers, error) {
 			// RFC 5322 permits headers without a body or separator. Accept EOF
 			// only after complete header lines, keeping truncated lines invalid.
 			if err == io.EOF && l == "" && len(h) > 0 {
+				if !validHeaderFieldNames(h) {
+					return h, fmt.Errorf("failed to read header: invalid header field")
+				}
 				return h, nil
 			}
 			return h, fmt.Errorf("failed to read header: %v", err)
@@ -39,6 +42,24 @@ func readHeader(r *bufio.Reader) (headers, error) {
 	}
 
 	return h, nil
+}
+
+func validHeaderFieldNames(h headers) bool {
+	for _, field := range h {
+		name, _, ok := strings.Cut(field, ":")
+		// RFC 5322 section 4.5 permits SP/HTAB before the colon.
+		name = strings.TrimRight(name, " \t")
+		if !ok || name == "" {
+			return false
+		}
+		for i := 0; i < len(name); i++ {
+			// RFC 5322 ftext is printable ASCII excluding the colon.
+			if name[i] < 33 || name[i] > 126 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func hashAlgo(algo SignatureAlgorithm) crypto.Hash {
