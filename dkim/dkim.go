@@ -384,6 +384,9 @@ func (d *Signature) VerifyWithResolver(headers []string, bodyHash string, domain
 		if errors.Is(err, domainkey.ErrInvalidVersion) {
 			d.VerifyResult = &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
 			return
+		} else if errors.Is(err, domainkey.ErrInvalidKeyType) {
+			d.VerifyResult = &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key type"}
+			return
 		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			d.VerifyResult = &VerifyResult{
 				status: VerifyStatusPermErr,

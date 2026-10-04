@@ -67,16 +67,12 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 	if !strings.EqualFold(k, "arc-message-signature") {
 		return nil, fmt.Errorf("invalid header field")
 	}
-	fields := strings.Split(v, ";")
-
-	for _, field := range fields {
-		keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
-		if len(keyValue) != 2 {
-			continue
-		}
-
-		key := strings.ToLower(strings.TrimSpace(keyValue[0]))
-		value := header.StripWhiteSpace(keyValue[1])
+	tags, err := parseSignatureTags(v, "ARC-Message-Signature", []string{"i", "a", "b", "bh", "d", "h", "s"})
+	if err != nil {
+		return nil, err
+	}
+	for _, tag := range tags {
+		key, value := tag.key, tag.value
 
 		switch key {
 		case "i":
@@ -258,6 +254,8 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		domKey, err := domainkey.LookupARCDomainKey(ams.Selector, ams.Domain)
 		if errors.Is(err, domainkey.ErrInvalidVersion) {
 			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+		} else if errors.Is(err, domainkey.ErrInvalidKeyType) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key type"}
 		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			return &VerifyResult{
 				status: VerifyStatusPermErr,

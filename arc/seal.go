@@ -67,18 +67,12 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 	if !strings.EqualFold(k, "arc-seal") {
 		return nil, fmt.Errorf("invalid header field")
 	}
-	fields := strings.Split(v, ";")
-	cvPresent := false
-
-	for _, field := range fields {
-		keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
-
-		if len(keyValue) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(keyValue[0])
-		value := header.StripWhiteSpace(keyValue[1])
+	tags, err := parseSignatureTags(v, "ARC-Seal", []string{"cv", "i", "a", "b", "d", "s"})
+	if err != nil {
+		return nil, err
+	}
+	for _, tag := range tags {
+		key, value := tag.key, tag.value
 
 		// Check for forbidden tags according to RFC 8617 Section 4.1.3
 		// "Note especially that the DKIM "h" tag is NOT allowed and, if found, MUST result in a cv status of "fail""
@@ -125,15 +119,11 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 			}
 			result.Timestamp = timestamp
 		case "cv":
-			cvPresent = true
 			if !isChainValidationResult(value) {
 				return nil, fmt.Errorf("invalid chain validation result")
 			}
 			result.ChainValidation = ChainValidationResult(value)
 		}
-	}
-	if !cvPresent {
-		return nil, fmt.Errorf("ARC-Seal cv tag is missing")
 	}
 	result.hashAlgo = hashAlgo(result.Algorithm)
 
@@ -246,6 +236,8 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 		domKey, err := domainkey.LookupARCDomainKey(as.Selector, as.Domain)
 		if errors.Is(err, domainkey.ErrInvalidVersion) {
 			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+		} else if errors.Is(err, domainkey.ErrInvalidKeyType) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key type"}
 		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			return &VerifyResult{
 				status: VerifyStatusPermErr,

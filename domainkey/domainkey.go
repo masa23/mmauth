@@ -267,18 +267,13 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 				}
 			}
 		case "k":
-			keyTypes := strings.Split(v, ":")
-			for _, keyType := range keyTypes {
-				trimmedKeyType := strings.TrimSpace(keyType)
-				switch KeyType(trimmedKeyType) {
-				case KeyTypeRSA:
-					key.KeyType = KeyTypeRSA
-				case KeyTypeED25519:
-					key.KeyType = KeyTypeED25519
-				// RFC 6376: Unrecognized key types MUST be ignored
-				default:
-					// Unknown key types are ignored per RFC 6376 Section 3.6.1
-				}
+			// k= declares one algorithm. Only an omitted tag defaults to RSA;
+			// an explicit unsupported/empty value cannot authorize an RSA key.
+			switch KeyType(v) {
+			case KeyTypeRSA, KeyTypeED25519:
+				key.KeyType = KeyType(v)
+			default:
+				return DomainKey{}, ErrInvalidKeyType
 			}
 		case "n":
 			key.Notes = v
