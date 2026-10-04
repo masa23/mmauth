@@ -267,7 +267,7 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 
 	// ヘッダの抽出と連結
-	sets, err := parseARCHeaders(headers)
+	sets, err := parseARCHeadersThrough(headers, as.InstanceNumber)
 	if err != nil {
 		return &VerifyResult{status: VerifyStatusFail, err: err, msg: "invalid ARC headers"}
 	}
@@ -414,9 +414,18 @@ func (s *signatures) getMaxInstance() int {
 }
 
 func parseARCHeaders(headers []string) (*signatures, error) {
+	return parseARCHeadersThrough(headers, 0)
+}
+
+// A positive maxInstance limits parsing to the sets covered by a single seal.
+// Full-chain parsing and signing use zero to retain validation of every set.
+func parseARCHeadersThrough(headers []string, maxInstance int) (*signatures, error) {
 	var sigs signatures
 
 	for _, h := range headers {
+		if maxInstance > 0 && isLaterARCHeader(h, maxInstance) {
+			continue
+		}
 		k, _ := header.ParseHeaderField(h)
 		switch strings.ToLower(k) {
 		case "arc-seal":
@@ -462,4 +471,33 @@ func parseARCHeaders(headers []string) (*signatures, error) {
 	}
 
 	return &sigs, nil
+}
+
+// Ignore a later header only when its instance is unambiguous and in range.
+// Other malformed tags in later sets do not affect this seal's signed input;
+// missing, invalid or duplicate i= tags still go through the normal parser.
+func isLaterARCHeader(raw string, maxInstance int) bool {
+	name, value := header.ParseHeaderField(raw)
+	switch strings.ToLower(name) {
+	case "arc-seal", "arc-message-signature", "arc-authentication-results":
+	default:
+		return false
+	}
+	instance, found := 0, false
+	for _, field := range strings.Split(value, ";") {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "i") {
+			continue
+		}
+		if found {
+			return false
+		}
+		found = true
+		n, err := strconv.Atoi(header.StripWhiteSpace(value))
+		if err != nil {
+			return false
+		}
+		instance = n
+	}
+	return found && instance > maxInstance && instance <= 50
 }

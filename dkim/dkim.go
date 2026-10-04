@@ -619,6 +619,8 @@ func (d *Signature) validateDomainKeyPolicy(domainKey *domainkey.DomainKey) erro
 		if keyType != domainkey.KeyTypeED25519 {
 			return fmt.Errorf("signature key type is not allowed by domain key")
 		}
+	default:
+		return fmt.Errorf("invalid signature algorithm")
 	}
 
 	for _, flag := range domainKey.SelectorFlags {
