@@ -1,5 +1,10 @@
 # Changelog
 
+## [v1.1.0](https://github.com/masa23/mmauth/compare/v1.0.10...v1.1.0) - 2026-10-04
+
+- GitHub Actions の参照を pinact で固定する by @masa23 in https://github.com/masa23/mmauth/pull/29
+- SPF・DKIM・ARC・DMARCの認証検証と署名処理を修正 by @masa23 in https://github.com/masa23/mmauth/pull/31
+
 ## [v1.0.10](https://github.com/masa23/mmauth/compare/v1.0.9...v1.0.10) - 2026-06-21
 
 - メール認証検証のエッジケース処理を改善 by @masa23 in https://github.com/masa23/mmauth/pull/26
