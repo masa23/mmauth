@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.1.1](https://github.com/masa23/mmauth/compare/v1.1.0...v1.1.1) - 2026-10-04
+
+- 本文と区切り空行のないメールを正常に読み込めるよう修正 by @masa23 in https://github.com/masa23/mmauth/pull/32
+
 ## [v1.1.0](https://github.com/masa23/mmauth/compare/v1.0.10...v1.1.0) - 2026-10-04
 
 - GitHub Actions の参照を pinact で固定する by @masa23 in https://github.com/masa23/mmauth/pull/29
