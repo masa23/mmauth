@@ -47,7 +47,7 @@ func readHeader(r *bufio.Reader) (headers, error) {
 func validHeaderFieldNames(h headers) bool {
 	for _, field := range h {
 		name, _, ok := strings.Cut(field, ":")
-		// RFC 5322 section 4.5 permits SP/HTAB before the colon.
+		// RFC 5322 section 4.5.8 permits SP/HTAB before the colon.
 		name = strings.TrimRight(name, " \t")
 		if !ok || name == "" {
 			return false
