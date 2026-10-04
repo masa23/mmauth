@@ -3,8 +3,11 @@ package mmauth
 import (
 	"bufio"
 	"crypto"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func Test_readHeader(t *testing.T) {
@@ -14,6 +17,10 @@ func Test_readHeader(t *testing.T) {
 		expect        headers
 		expectedError bool
 	}{
+		{
+			name:          "empty input",
+			expectedError: true,
+		},
 		{
 			name:   "empty",
 			input:  "\r\n\r\n",
@@ -43,6 +50,92 @@ func Test_readHeader(t *testing.T) {
 			expect: headers{
 				"header:hoge\r\n",
 			},
+		},
+		{
+			name:   "header only",
+			input:  "From: a@example.com\r\n",
+			expect: headers{"From: a@example.com\r\n"},
+		},
+		{
+			name:  "header only with folding",
+			input: "From: a@example.com\r\nSubject: hello\r\n\tworld\r\n",
+			expect: headers{
+				"From: a@example.com\r\n",
+				"Subject: hello\r\n\tworld\r\n",
+			},
+		},
+		{
+			name:  "header only LF",
+			input: "From: a@example.com\nSubject: hello\n",
+			expect: headers{
+				"From: a@example.com\r\n",
+				"Subject: hello\r\n",
+			},
+		},
+		{
+			name:   "header only field name boundaries",
+			input:  "!: first\r\n~: last\r\n",
+			expect: headers{"!: first\r\n", "~: last\r\n"},
+		},
+		{
+			name:   "header only obsolete whitespace before colon",
+			input:  "From \t: a@example.com\r\n",
+			expect: headers{"From \t: a@example.com\r\n"},
+		},
+		{
+			name:          "header only missing colon",
+			input:         "not-a-header\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only malformed last line",
+			input:         "From: a@example.com\r\nnot-a-header\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only colon in continuation",
+			input:         "not-a-header\r\n\tcontinued: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only empty field name",
+			input:         ": value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only whitespace in field name",
+			input:         "Bad Name: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only control in field name",
+			input:         "Bad\x00Name: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only DEL in field name",
+			input:         "Bad\x7fName: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only non-ASCII field name",
+			input:         "X-é: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only orphan continuation",
+			input:         "\torphan: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "unterminated last header",
+			input:         "From: a@example.com\r\nSubject: hello",
+			expectedError: true,
+		},
+		{
+			name:          "unterminated continuation",
+			input:         "Subject: hello\r\n\tworld",
+			expectedError: true,
 		},
 		{
 			name:          "non header crlf",
@@ -83,13 +176,25 @@ func Test_readHeader(t *testing.T) {
 	}
 }
 
-func TestMMAuthCloseReturnsParseError(t *testing.T) {
-	m := NewMMAuth()
-	if _, err := m.Write([]byte("header:value")); err != nil {
-		t.Fatalf("unexpected write error: %v", err)
+func TestReadHeaderReadError(t *testing.T) {
+	sentinel := errors.New("header read failed")
+	r := io.MultiReader(strings.NewReader("From: a@example.com\r\n"), iotest.ErrReader(sentinel))
+	if _, err := readHeader(bufio.NewReader(r)); err == nil || !strings.Contains(err.Error(), sentinel.Error()) {
+		t.Fatalf("expected read error, got %v", err)
 	}
-	if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
-		t.Fatalf("expected parse error from Close, got %v", err)
+}
+
+func TestMMAuthCloseReturnsParseError(t *testing.T) {
+	for _, input := range []string{"header:value", "not-a-header\r\n", "From: a@example.com\r\nnot-a-header\r\n"} {
+		t.Run(input, func(t *testing.T) {
+			m := NewMMAuth()
+			if _, err := m.Write([]byte(input)); err != nil {
+				t.Fatalf("unexpected write error: %v", err)
+			}
+			if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
+				t.Fatalf("expected parse error from Close, got %v", err)
+			}
+		})
 	}
 }
 
