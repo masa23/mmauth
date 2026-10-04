@@ -16,6 +16,48 @@ import (
 	"github.com/masa23/mmauth/spf"
 )
 
+func TestHeaderOnlyDKIMVerification(t *testing.T) {
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dk := &domainkey.DomainKey{KeyType: domainkey.KeyTypeED25519, PublicKey: base64.StdEncoding.EncodeToString(pub)}
+	headers := []string{"From: a@example.com\r\n", "Subject: header-only message\r\n"}
+	for _, mode := range []Canonicalization{CanonicalizationSimple, CanonicalizationRelaxed} {
+		t.Run(string(mode), func(t *testing.T) {
+			body := ""
+			if mode == CanonicalizationSimple {
+				body = crlf
+			}
+			sum := sha256.Sum256([]byte(body))
+			want := base64.StdEncoding.EncodeToString(sum[:])
+			sig := &dkim.Signature{Version: 1, Domain: "example.com", Selector: "s", Canonicalization: string(mode) + "/" + string(mode), BodyHash: want}
+			if err := sig.Sign(headers, key); err != nil {
+				t.Fatal(err)
+			}
+			m := NewMMAuth()
+			if _, err := m.Write([]byte("DKIM-Signature: " + sig.String() + crlf + strings.Join(headers, ""))); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Close(); err != nil {
+				t.Fatalf("header-only message rejected: %v", err)
+			}
+			got := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{Body: mode, Algorithm: crypto.SHA256})
+			if got != want {
+				t.Fatalf("empty body hash=%q, want %q", got, want)
+			}
+			sigs := *m.AuthenticationHeaders.DKIMSignatures
+			if len(sigs) != 1 {
+				t.Fatalf("DKIM signatures=%d, want 1", len(sigs))
+			}
+			sigs[0].Verify(m.Headers, got, dk)
+			if sigs[0].VerifyResult.Status() != dkim.VerifyStatusPass {
+				t.Fatalf("DKIM verification failed: %v", sigs[0].VerifyResult.Error())
+			}
+		})
+	}
+}
+
 func TestRegressionSPFIdentity(t *testing.T) {
 	old := spf.DefaultTXTResolver
 	defer func() { spf.DefaultTXTResolver = old }()

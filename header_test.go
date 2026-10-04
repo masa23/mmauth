@@ -3,8 +3,11 @@ package mmauth
 import (
 	"bufio"
 	"crypto"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func Test_readHeader(t *testing.T) {
@@ -14,6 +17,10 @@ func Test_readHeader(t *testing.T) {
 		expect        headers
 		expectedError bool
 	}{
+		{
+			name:          "empty input",
+			expectedError: true,
+		},
 		{
 			name:   "empty",
 			input:  "\r\n\r\n",
@@ -43,6 +50,37 @@ func Test_readHeader(t *testing.T) {
 			expect: headers{
 				"header:hoge\r\n",
 			},
+		},
+		{
+			name:   "header only",
+			input:  "From: a@example.com\r\n",
+			expect: headers{"From: a@example.com\r\n"},
+		},
+		{
+			name:  "header only with folding",
+			input: "From: a@example.com\r\nSubject: hello\r\n\tworld\r\n",
+			expect: headers{
+				"From: a@example.com\r\n",
+				"Subject: hello\r\n\tworld\r\n",
+			},
+		},
+		{
+			name:  "header only LF",
+			input: "From: a@example.com\nSubject: hello\n",
+			expect: headers{
+				"From: a@example.com\r\n",
+				"Subject: hello\r\n",
+			},
+		},
+		{
+			name:          "unterminated last header",
+			input:         "From: a@example.com\r\nSubject: hello",
+			expectedError: true,
+		},
+		{
+			name:          "unterminated continuation",
+			input:         "Subject: hello\r\n\tworld",
+			expectedError: true,
 		},
 		{
 			name:          "non header crlf",
@@ -80,6 +118,14 @@ func Test_readHeader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReadHeaderReadError(t *testing.T) {
+	sentinel := errors.New("header read failed")
+	r := io.MultiReader(strings.NewReader("From: a@example.com\r\n"), iotest.ErrReader(sentinel))
+	if _, err := readHeader(bufio.NewReader(r)); err == nil || !strings.Contains(err.Error(), sentinel.Error()) {
+		t.Fatalf("expected read error, got %v", err)
 	}
 }
 

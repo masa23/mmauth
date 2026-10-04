@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"crypto"
 	"fmt"
-	"net/textproto"
+	"io"
 	"strings"
 
 	"github.com/masa23/mmauth/internal/canonical"
@@ -15,14 +15,18 @@ type headers []string
 
 // ヘッダを読み込み分解する
 func readHeader(r *bufio.Reader) (headers, error) {
-	tr := textproto.NewReader(r)
-
 	var h headers
 	for {
-		l, err := tr.ReadLine()
+		l, err := r.ReadString('\n')
 		if err != nil {
+			// RFC 5322 permits headers without a body or separator. Accept EOF
+			// only after complete header lines, keeping truncated lines invalid.
+			if err == io.EOF && l == "" && len(h) > 0 {
+				return h, nil
+			}
 			return h, fmt.Errorf("failed to read header: %v", err)
 		}
+		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
 
 		if len(l) == 0 {
 			break
