@@ -54,6 +54,14 @@ var (
 	ErrInvalidVersion       = errors.New("invalid version")
 )
 
+// dnsLookupError preserves the resolver error and supports errors.Is with the
+// package sentinel, including on Go 1.19 (which predates multiple %w values).
+type dnsLookupError struct{ cause error }
+
+func (e *dnsLookupError) Error() string        { return ErrDNSLookupFailed.Error() + ": " + e.cause.Error() }
+func (e *dnsLookupError) Unwrap() error        { return e.cause }
+func (e *dnsLookupError) Is(target error) bool { return target == ErrDNSLookupFailed }
+
 type HashAlgo string
 
 const (
@@ -91,6 +99,10 @@ type DomainKey struct {
 	SelectorFlags []SelectorFlags // t flags separated by colons
 	Version       string          // v version default:DKIM1
 	raw           string          // raw record
+	// These flags preserve explicit h=/s= restrictions even if every listed
+	// value is unknown. They must survive serialization of cached keys.
+	HashRestricted    bool `json:",omitempty"`
+	ServiceRestricted bool `json:",omitempty"`
 }
 
 // テストフラグが立っているか
@@ -109,11 +121,11 @@ func (d *DomainKey) IsService(service ServiceType) bool {
 		return true
 	}
 	// service typeが指定されていない場合は全てのサービスに対応
-	if len(d.ServiceType) == 0 {
+	if len(d.ServiceType) == 0 && !d.ServiceRestricted {
 		return true
 	}
 	for _, s := range d.ServiceType {
-		if s == service {
+		if s == service || s == ServiceTypeAll {
 			return true
 		}
 	}
@@ -157,21 +169,21 @@ func LookupDKIMDomainKeyWithResolver(selector, domain string, resolver TXTResolv
 }
 
 // LookupARCDomainKey ARCのドメインキーを検索する
-// versionが含まれていなくてもエラーを返さない
+// DKIMと同じ鍵バージョンを要求する。versionの省略は許可する。
 func LookupARCDomainKey(selector, domain string) (DomainKey, error) {
-	return lookupDomainKey(selector, domain)
+	return LookupDKIMDomainKey(selector, domain)
 }
 
 // lookupDomainKey
 func lookupDomainKey(selector, domain string) (DomainKey, error) {
 	query := fmt.Sprintf("%s._domainkey.%s", selector, domain)
 	res, err := DefaultResolver(query)
-	if dnsErr, ok := err.(*net.DNSError); ok {
-		if dnsErr.IsNotFound {
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound
 		}
-	} else if err != nil {
-		return DomainKey{}, ErrDNSLookupFailed
+		return DomainKey{}, &dnsLookupError{cause: err}
 	}
 	return parseDomainKeyRecords(res)
 }
@@ -213,12 +225,12 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 		res, err = resolver.LookupTXT(ctx, query)
 	}
 
-	if dnsErr, ok := err.(*net.DNSError); ok {
-		if dnsErr.IsNotFound {
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound
 		}
-	} else if err != nil {
-		return DomainKey{}, ErrDNSLookupFailed
+		return DomainKey{}, &dnsLookupError{cause: err}
 	}
 
 	return parseDomainKeyRecords(res)
@@ -240,6 +252,7 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 			key.Version = v
 			continue
 		case "h":
+			key.HashRestricted = true
 			algos := strings.Split(v, ":")
 			for _, algo := range algos {
 				trimmedAlgo := strings.TrimSpace(algo)
@@ -254,18 +267,13 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 				}
 			}
 		case "k":
-			keyTypes := strings.Split(v, ":")
-			for _, keyType := range keyTypes {
-				trimmedKeyType := strings.TrimSpace(keyType)
-				switch KeyType(trimmedKeyType) {
-				case KeyTypeRSA:
-					key.KeyType = KeyTypeRSA
-				case KeyTypeED25519:
-					key.KeyType = KeyTypeED25519
-				// RFC 6376: Unrecognized key types MUST be ignored
-				default:
-					// Unknown key types are ignored per RFC 6376 Section 3.6.1
-				}
+			// k= declares one algorithm. Only an omitted tag defaults to RSA;
+			// an explicit unsupported/empty value cannot authorize an RSA key.
+			switch KeyType(v) {
+			case KeyTypeRSA, KeyTypeED25519:
+				key.KeyType = KeyType(v)
+			default:
+				return DomainKey{}, ErrInvalidKeyType
 			}
 		case "n":
 			key.Notes = v
@@ -273,6 +281,7 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 			// 空白を削除して格納
 			key.PublicKey = strings.ReplaceAll(v, " ", "")
 		case "s":
+			key.ServiceRestricted = true
 			serviceTypes := strings.Split(v, ":")
 			for _, serviceType := range serviceTypes {
 				trimmedServiceType := strings.TrimSpace(serviceType)
@@ -306,4 +315,18 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 	}
 
 	return key, nil
+}
+
+// AllowsHash reports whether an algorithm is permitted by h=. An explicitly
+// specified list containing only unknown algorithms permits no known algorithm.
+func (d *DomainKey) AllowsHash(algo HashAlgo) bool {
+	if !d.HashRestricted && len(d.HashAlgo) == 0 {
+		return true
+	}
+	for _, allowed := range d.HashAlgo {
+		if allowed == algo {
+			return true
+		}
+	}
+	return false
 }

@@ -104,3 +104,18 @@ func BenchmarkStripBValue(b *testing.B) {
 		StripBValueForSigning(input)
 	}
 }
+
+func TestStripBValueFWSAndBoundaries(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"DKIM-Signature: b = abc; bh=xyz\r\n", "DKIM-Signature: b =; bh=xyz\r\n"},
+		{"DKIM-Signature: b\r\n\t= abc\r\n def \t\r\n", "DKIM-Signature: b\r\n\t=\r\n"},
+		{"DKIM-Signature: x=日本語; b=abc; bh=xyz", "DKIM-Signature: x=日本語; b=; bh=xyz"},
+		{"DKIM-Signature: x= b=unrelated; b=abc", "DKIM-Signature: x= b=unrelated; b="},
+		{"ARC-Seal: b=\r\n", "ARC-Seal: b=\r\n"},
+		{"ARC-Message-Signature: b=\r\n \t\r\n", "ARC-Message-Signature: b=\r\n"},
+	} {
+		if got := StripBValueForSigning(tc.in); got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

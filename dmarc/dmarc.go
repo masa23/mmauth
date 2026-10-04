@@ -22,6 +22,14 @@ var (
 	ErrMultipleRecords = errors.New("multiple DMARC records found")
 )
 
+// dnsLookupError preserves the resolver error and supports errors.Is with the
+// package sentinel, including on Go 1.19 (which predates multiple %w values).
+type dnsLookupError struct{ cause error }
+
+func (e *dnsLookupError) Error() string        { return ErrDNSLookupFailed.Error() + ": " + e.cause.Error() }
+func (e *dnsLookupError) Unwrap() error        { return e.cause }
+func (e *dnsLookupError) Is(target error) bool { return target == ErrDNSLookupFailed }
+
 type AlignmentMode string
 
 const (
@@ -74,8 +82,10 @@ type Record struct {
 	ReportInterval     uint32          // ri Interval for aggregate reports (seconds)
 	SubdomainPolicy    PolicyType      // sp Subdomain policy
 	Version            string          // v DMARC version, must be "DMARC1"
-	isSubdomainPolicy  bool            // isSubdomainPolicy true if this is a subdomain policy
-	raw                string          // raw record
+	// IsSubdomainPolicy records whether lookup fell back to the organizational
+	// domain. Preserve it when caching records so EffectivePolicy still uses sp.
+	IsSubdomainPolicy bool   `json:",omitempty"`
+	raw               string // raw record
 }
 
 // parseReportURI parses a DMARC URI with optional size limit.
@@ -206,33 +216,38 @@ func getParentDomain(domain string) (string, error) {
 	return parentDomain, nil
 }
 
+// LookupRecordWithSubdomainFallback queries the From domain, then its
+// organizational domain directly (RFC 7489 §6.6.3).
 func LookupRecordWithSubdomainFallback(domain string) (*Record, error) {
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
 	d, err := LookupRecord(domain)
-	if err == nil {
-		return d, nil
+	if !errors.Is(err, ErrNoRecordFound) {
+		return d, err
 	}
-	for {
-		orgDomain, err := getParentDomain(domain)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get organizational domain: %w", err)
-		}
-		if orgDomain == domain {
-			return nil, ErrNoRecordFound
-		}
-		d, err = LookupRecord(orgDomain)
-		if err == nil {
-			if d.SubdomainPolicy == "" {
-				return nil, ErrNoRecordFound
-			}
-			d.isSubdomainPolicy = true
-			return d, nil
-		}
-		domain = orgDomain
-		if errors.Is(err, ErrNoRecordFound) {
-			continue
-		}
+	orgDomain, err := publicsuffix.EffectiveTLDPlusOne(domain)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organizational domain: %w", err)
+	}
+	if orgDomain == domain {
+		return nil, ErrNoRecordFound
+	}
+	d, err = LookupRecord(orgDomain)
+	if err != nil {
 		return nil, err
 	}
+	if d.SubdomainPolicy == "" {
+		d.SubdomainPolicy = d.Policy
+	}
+	d.IsSubdomainPolicy = true
+	return d, nil
+}
+
+// EffectivePolicy returns the policy for the domain used in the lookup.
+func (d *Record) EffectivePolicy() PolicyType {
+	if d.IsSubdomainPolicy && d.SubdomainPolicy != "" {
+		return d.SubdomainPolicy
+	}
+	return d.Policy
 }
 
 func isDMARCRecord(raw string) bool {
@@ -247,12 +262,12 @@ func isDMARCRecord(raw string) bool {
 func LookupRecord(domain string) (*Record, error) {
 	query := fmt.Sprintf("_dmarc.%s", domain)
 	res, err := DefaultResolver(query)
-	if dnsErr, ok := err.(*net.DNSError); ok {
-		if dnsErr.IsNotFound {
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			return nil, ErrNoRecordFound
 		}
-	} else if err != nil {
-		return nil, fmt.Errorf("dns lookup failed: %w", err)
+		return nil, &dnsLookupError{cause: err}
 	}
 	var dmarcRecords []string
 	for _, v := range res {
@@ -276,8 +291,8 @@ func LookupRecord(domain string) (*Record, error) {
 }
 
 func ParseRecord(raw string) (*Record, error) {
-	var d Record
-	d.raw = raw
+	d := Record{raw: raw, Percent: 100, AlignmentDKIM: AlignmentRelaxed, AlignmentSPF: AlignmentRelaxed, ReportInterval: 86400}
+	sawRF := false
 
 	// Track whether rua/ruf tags have been seen to properly detect duplicates
 	// even when the tag parsing fails to add any valid URIs
@@ -371,6 +386,7 @@ func ParseRecord(raw string) (*Record, error) {
 				return nil, fmt.Errorf("invalid p value: %s", d.Policy)
 			}
 		case "rf":
+			sawRF = true
 			// rf: Format for message-specific failure reports
 			// Per RFC 7489 Section 6.3.8, only "afrf" is currently supported
 			formats := strings.Split(strings.TrimSpace(v), ":")
@@ -419,5 +435,11 @@ func ParseRecord(raw string) (*Record, error) {
 		return nil, fmt.Errorf("missing required 'p' tag in DMARC record")
 	}
 
+	if len(d.FailureOptions) == 0 {
+		d.FailureOptions = []FailureOption{FailureAllFail}
+	}
+	if !sawRF {
+		d.ReportFormat = []ReportFormat{ReportFormatAFRF}
+	}
 	return &d, nil
 }

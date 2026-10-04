@@ -40,6 +40,7 @@ type AuthenticationHeaders struct {
 	DKIMSignatures *dkim.Signatures
 	ARCSignatures  *arc.Signatures
 	SPFResult      *spf.Result
+	ARCError       error // malformed ARC headers; other authentication checks continue
 }
 
 func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
@@ -48,18 +49,19 @@ func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
 		return nil, fmt.Errorf("failed to parse dkim headers: %v", err)
 	}
 	a, err := arc.ParseARCHeaders(headers)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse arc headers: %v", err)
-	}
 	return &AuthenticationHeaders{
 		DKIMSignatures: d,
 		ARCSignatures:  a,
+		ARCError:       err,
 	}, nil
 }
 
 func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAndAlgorithm {
 	var ret []BodyCanonicalizationAndAlgorithm
 	for _, dkim := range *a.DKIMSignatures {
+		if dkim == nil || dkim.ParseError() != nil {
+			continue
+		}
 		_, body, err := parseHeaderCanonicalization(dkim.Canonicalization)
 		if err != nil {
 			continue
@@ -68,6 +70,7 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 			Body:      body,
 			Algorithm: hashAlgo(SignatureAlgorithm(dkim.Algorithm)),
 			Limit:     dkim.Limit,
+			LimitSet:  dkim.LimitSet,
 		}
 		if !isCcanonicalizationBodyAndAlgorithm(bca, ret) {
 			ret = append(ret, bca)
@@ -179,7 +182,8 @@ type BodyHash struct {
 
 // 同時に複数のBodyHashを計算するための構造体
 type multiBodyHash struct {
-	bodyHashList []struct {
+	canonicalizers []io.WriteCloser
+	bodyHashList   []struct {
 		*bodyhash.BodyHash
 		*BodyCanonicalizationAndAlgorithm
 		Limit int64
@@ -188,22 +192,25 @@ type multiBodyHash struct {
 
 // 同時に複数のBodyHashを計算するための構造体の初期化
 func (mh *multiBodyHash) bodyHash(bca []BodyCanonicalizationAndAlgorithm) {
+	groups := make(map[canonical.Canonicalization][]io.Writer)
 	for i, v := range bca {
+		bh := bodyhash.NewCanonicalizedBodyHash(v.Algorithm, v.Limit, v.LimitSet)
 		mh.bodyHashList = append(mh.bodyHashList, struct {
 			*bodyhash.BodyHash
 			*BodyCanonicalizationAndAlgorithm
 			Limit int64
-		}{
-			BodyHash:                         bodyhash.NewBodyHash(canonical.Canonicalization(v.Body), v.Algorithm, v.Limit),
-			BodyCanonicalizationAndAlgorithm: &bca[i],
-			Limit:                            v.Limit,
-		})
+		}{bh, &bca[i], v.Limit})
+		canon := canonical.Canonicalization(v.Body)
+		groups[canon] = append(groups[canon], bh)
+	}
+	for canon, writers := range groups {
+		mh.canonicalizers = append(mh.canonicalizers, canonical.Body(io.MultiWriter(writers...), canon))
 	}
 }
 
 // メール本文の書き込みを行う
 func (mh *multiBodyHash) Write(p []byte) (n int, err error) {
-	for _, v := range mh.bodyHashList {
+	for _, v := range mh.canonicalizers {
 		if _, err := v.Write(p); err != nil {
 			return 0, err
 		}
@@ -213,7 +220,7 @@ func (mh *multiBodyHash) Write(p []byte) (n int, err error) {
 
 // メール本文の書き込みを終了する
 func (mh *multiBodyHash) Close() error {
-	for _, v := range mh.bodyHashList {
+	for _, v := range mh.canonicalizers {
 		if err := v.Close(); err != nil {
 			return err
 		}
@@ -298,13 +305,14 @@ func (m *MMAuth) Verify() {
 					Body:      Canonicalization(can.Body),
 					Algorithm: can.HashAlgo,
 					Limit:     d.Limit,
+					LimitSet:  d.LimitSet,
 				})
 				d.Verify(m.Headers, bodyHash, nil)
 			}
 		}
 	}
 	// ARCの署名を検証する
-	if m.AuthenticationHeaders.ARCSignatures != nil {
+	if m.AuthenticationHeaders.ARCError == nil && m.AuthenticationHeaders.ARCSignatures != nil {
 		max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
 		for i := max; i >= 1; i-- {
 			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(i)
@@ -328,19 +336,17 @@ func (m *MMAuth) Verify() {
 	}
 }
 
+// evaluateSPF evaluates the MAIL FROM identity. Null reverse paths use HELO.
 func evaluateSPF(remoteAddr net.IP, helo, mailFrom string) *spf.Result {
-	result := spf.CheckSPF(remoteAddr, helo, "", helo)
-	// RFC 7208準拠のSPFチェック: まずHELOで評価し、結果がnone/neutralの場合のみMAIL FROMでフォールバック
-	if result.Status == spf.None || result.Status == spf.Neutral {
-		mailFromDomain := helo
-		if mailFrom != "" {
-			if d, err := ParseAddressDomain(mailFrom); err == nil {
-				mailFromDomain = d
-			}
-		}
-		result = spf.CheckSPF(remoteAddr, mailFromDomain, mailFrom, helo)
+	if mailFrom == "" || mailFrom == "<>" {
+		return spf.CheckSPF(remoteAddr, helo, "", helo)
 	}
-	return result
+	sender := ParseAddress(mailFrom)
+	domain, err := ParseAddressDomain(sender)
+	if err != nil {
+		return &spf.Result{Status: spf.None, Reason: "invalid MAIL FROM"}
+	}
+	return spf.CheckSPF(remoteAddr, domain, sender, helo)
 }
 
 // 認証結果を配列形式で渡す
@@ -353,7 +359,12 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 
 	var results []string
 	if spfResult != nil {
-		results = append(results, fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", spfResult.Status, mailFrom, helo))
+		if mailFrom == "" || mailFrom == "<>" {
+			results = append(results, fmt.Sprintf("spf=%s smtp.helo=%s", spfResult.Status, helo))
+		} else {
+			results = append(results, fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", spfResult.Status, mailFrom, helo))
+		}
+		m.AuthenticationHeaders.SPFResult = spfResult
 	}
 
 	// DKIM
@@ -369,7 +380,9 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 
 	// ARC
 	arcSigns := m.AuthenticationHeaders.ARCSignatures
-	if arcSigns != nil {
+	if m.AuthenticationHeaders.ARCError != nil {
+		results = append(results, "arc=fail (malformed ARC headers)")
+	} else if arcSigns != nil {
 		results = append(results, arcSigns.GetVerifyResultString())
 	}
 
@@ -378,7 +391,7 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 
 func (m *MMAuth) GetBodyHash(bca BodyCanonicalizationAndAlgorithm) string {
 	for _, bh := range m.bodyHashed {
-		if bh.Algorithm.Algorithm == bca.Algorithm && bh.Algorithm.Body == bca.Body && bh.Limit == bca.Limit {
+		if bh.Algorithm.Algorithm == bca.Algorithm && bh.Algorithm.Body == bca.Body && bh.Limit == bca.Limit && (bca.Limit > 0 || bh.Algorithm.LimitSet == bca.LimitSet) {
 			return bh.BodyHash
 		}
 	}

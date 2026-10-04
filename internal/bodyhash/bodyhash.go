@@ -39,30 +39,28 @@ func (b *BodyHash) Get() string {
 
 // Canonicalizationとハッシュアルゴリズムを指定してBodyHasherを生成する
 func NewBodyHash(canon canonical.Canonicalization, hashAlgo crypto.Hash, limit int64) *BodyHash {
-	if limit < 0 {
-		limit = 0
-	}
-	hasher := hashAlgo.New()
-	bh := &BodyHash{
-		hashAlgo: hashAlgo,
-		hasher:   hasher,
-	}
+	return NewBodyHashWithLimit(canon, hashAlgo, limit, false)
+}
 
-	// limitWriterを介してcanonicalizerに接続する
-	// canonicalization -> limitWriter -> hasher
+// NewBodyHashWithLimit distinguishes explicit l=0 from an omitted length.
+// Positive limits remain effective even when limitSet is false.
+func NewBodyHashWithLimit(canon canonical.Canonicalization, hashAlgo crypto.Hash, limit int64, limitSet bool) *BodyHash {
+	bh := NewCanonicalizedBodyHash(hashAlgo, limit, limitSet)
+	bh.w = canonical.Body(bh.w, canon)
+	return bh
+}
+
+type writerCloser struct{ io.Writer }
+
+func (writerCloser) Close() error { return nil }
+
+// NewCanonicalizedBodyHash consumes already canonicalized bytes, allowing
+// callers to share a canonicalizer among multiple hash/length combinations.
+func NewCanonicalizedBodyHash(hashAlgo crypto.Hash, limit int64, limitSet bool) *BodyHash {
+	hasher := hashAlgo.New()
 	var writer io.Writer = hasher
-	if limit > 0 {
+	if limit > 0 || (limitSet && limit == 0) {
 		writer = newLimitWriter(writer, limit)
 	}
-
-	switch canon {
-	case canonical.Simple:
-		bh.w = canonical.SimpleBody(writer)
-	case canonical.Relaxed:
-		bh.w = canonical.RelaxedBody(writer)
-	default:
-		// 指定が不明の場合はSimpleを使う
-		bh.w = canonical.SimpleBody(writer)
-	}
-	return bh
+	return &BodyHash{hashAlgo: hashAlgo, hasher: hasher, w: writerCloser{writer}}
 }

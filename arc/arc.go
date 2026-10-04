@@ -3,7 +3,6 @@ package arc
 import (
 	"crypto"
 	"encoding/base64"
-	"errors"
 	"fmt"
 
 	"github.com/masa23/mmauth/domainkey"
@@ -85,6 +84,9 @@ type Signature struct {
 	arcMessageSignature      *ARCMessageSignature
 	arcAuthenticationResults *ARCAuthenticationResults
 	VerifyResult             *VerifyResult
+	sealResult               *VerifyResult
+	messageResult            *VerifyResult
+	parseErr                 error
 }
 
 func (arc *Signature) GetInstanceNumber() int {
@@ -107,68 +109,31 @@ func (arc *Signature) GetVerifyResult() *VerifyResult {
 	return arc.VerifyResult
 }
 
+// Verify checks a set. A non-nil domainKey overrides both keys for compatibility.
+// With nil, AS and AMS each resolve their own selector and domain.
 func (arc *Signature) Verify(headers []string, bodyHash string, domainKey *domainkey.DomainKey) {
-	if arc == nil || arc.arcSeal == nil || arc.arcMessageSignature == nil {
-		arc.VerifyResult = &VerifyResult{
-			status: VerifyStatusNeutral,
-			err:    fmt.Errorf("arc is not found"),
-			msg:    "arc is not found",
-		}
-		return
-	}
-	if domainKey == nil {
-		// タイムアウト付きのリゾルバーを使用
-		resolver := domainkey.NewDefaultTXTResolver()
-		domKey, err := domainkey.LookupDKIMDomainKeyWithResolver(arc.arcSeal.Selector, arc.arcSeal.Domain, resolver)
-		if errors.Is(err, domainkey.ErrNoRecordFound) {
-			arc.VerifyResult = &VerifyResult{
-				status: VerifyStatusPermErr,
-				err:    fmt.Errorf("domain key is not found: %v", err),
-				msg:    "domain key is not found",
-			}
-			return
-		} else if err != nil {
-			arc.VerifyResult = &VerifyResult{
-				status: VerifyStatusTempErr,
-				err:    fmt.Errorf("failed to lookup domain key: %v", err),
-				msg:    "failed to lookup domain key",
-			}
-			return
-		}
-		domainKey = &domKey
-	}
-	sealResult := arc.arcSeal.Verify(headers, domainKey)
-	amsResult := arc.arcMessageSignature.Verify(headers, bodyHash, domainKey)
+	arc.VerifyWithKeys(headers, bodyHash, domainKey, domainKey)
+}
 
-	// ARC-Authentication-ResultsとARC-Message-Signatureの検証結果が両方ともpassの場合はARCの検証結果をpassとする
-	if sealResult.status == VerifyStatusPass && amsResult.status == VerifyStatusPass {
-		arc.VerifyResult = &VerifyResult{
-			status:    VerifyStatusPass,
-			err:       nil,
-			msg:       "good signature",
-			domainKey: domainKey,
-		}
+// VerifyWithKeys allows separate AS and AMS keys; nil keys are resolved by DNS.
+func (arc *Signature) VerifyWithKeys(headers []string, bodyHash string, sealKey, messageKey *domainkey.DomainKey) {
+	if arc == nil {
 		return
 	}
-
-	if sealResult.status != VerifyStatusPass {
-		arc.VerifyResult = &VerifyResult{
-			status:    sealResult.status,
-			err:       sealResult.err,
-			msg:       sealResult.msg,
-			domainKey: domainKey,
-		}
+	if arc.parseErr != nil {
+		arc.VerifyResult = &VerifyResult{status: VerifyStatusFail, err: arc.parseErr, msg: "malformed ARC headers"}
 		return
 	}
-
-	if amsResult.status != VerifyStatusPass {
-		arc.VerifyResult = &VerifyResult{
-			status:    amsResult.status,
-			err:       amsResult.err,
-			msg:       amsResult.msg,
-			domainKey: domainKey,
-		}
+	arc.sealResult, arc.messageResult = nil, nil
+	if arc.arcSeal == nil || arc.arcMessageSignature == nil || arc.arcAuthenticationResults == nil {
+		arc.VerifyResult = &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("ARC set is incomplete"), msg: "ARC set is incomplete"}
 		return
+	}
+	arc.sealResult = arc.arcSeal.Verify(headers, sealKey)
+	arc.messageResult = arc.arcMessageSignature.Verify(headers, bodyHash, messageKey)
+	arc.VerifyResult = arc.sealResult
+	if arc.sealResult.status == VerifyStatusPass {
+		arc.VerifyResult = arc.messageResult
 	}
 }
 
@@ -187,4 +152,38 @@ func hashAlgo(algo SignatureAlgorithm) crypto.Hash {
 
 func base64Decode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
+}
+
+// validateDomainKeyPolicy applies the same key restrictions to AS and AMS.
+func validateDomainKeyPolicy(key *domainkey.DomainKey, algorithm SignatureAlgorithm) error {
+	if key.Version != "" && key.Version != "DKIM1" {
+		return domainkey.ErrInvalidVersion
+	}
+	if !key.IsService(domainkey.ServiceTypeEmail) {
+		return fmt.Errorf("domain key service type is invalid")
+	}
+	want := domainkey.HashAlgoSHA256
+	if algorithm == SignatureAlgorithmRSA_SHA1 {
+		want = domainkey.HashAlgoSHA1
+	}
+	if !key.AllowsHash(want) {
+		return fmt.Errorf("signature hash algorithm is not allowed by domain key")
+	}
+	keyType := key.KeyType
+	if keyType == "" {
+		keyType = domainkey.KeyTypeRSA
+	}
+	switch algorithm {
+	case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+		if keyType != domainkey.KeyTypeRSA {
+			return fmt.Errorf("signature key type is not allowed by domain key")
+		}
+	case SignatureAlgorithmED25519_SHA256:
+		if keyType != domainkey.KeyTypeED25519 {
+			return fmt.Errorf("signature key type is not allowed by domain key")
+		}
+	default:
+		return fmt.Errorf("invalid signature algorithm")
+	}
+	return nil
 }

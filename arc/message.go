@@ -67,16 +67,12 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 	if !strings.EqualFold(k, "arc-message-signature") {
 		return nil, fmt.Errorf("invalid header field")
 	}
-	fields := strings.Split(v, ";")
-
-	for _, field := range fields {
-		keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
-		if len(keyValue) != 2 {
-			continue
-		}
-
-		key := strings.ToLower(strings.TrimSpace(keyValue[0]))
-		value := header.StripWhiteSpace(keyValue[1])
+	tags, err := parseSignatureTags(v, "ARC-Message-Signature", []string{"i", "a", "b", "bh", "d", "h", "s"})
+	if err != nil {
+		return nil, err
+	}
+	for _, tag := range tags {
+		key, value := tag.key, tag.value
 
 		switch key {
 		case "i":
@@ -158,6 +154,15 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		}
 		h = append(h, k)
 	}
+	fromSigned := false
+	for _, name := range h {
+		if strings.EqualFold(strings.TrimSpace(name), "from") {
+			fromSigned = true
+		}
+	}
+	if !fromSigned {
+		return fmt.Errorf("h= tag must include From")
+	}
 	h = header.RemoveDuplicates(h)
 	canHeader, _, err := header.ParseHeaderCanonicalization(ams.Canonicalization)
 	if err != nil {
@@ -234,10 +239,24 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 		}
 	}
 
+	fromSigned := false
+	for _, name := range strings.Split(ams.Headers, ":") {
+		if strings.EqualFold(strings.TrimSpace(name), "from") {
+			fromSigned = true
+		}
+	}
+	if !fromSigned {
+		return &VerifyResult{status: VerifyStatusPermErr, err: fmt.Errorf("h= tag must include From"), msg: "From is not signed"}
+	}
+
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
 		domKey, err := domainkey.LookupARCDomainKey(ams.Selector, ams.Domain)
-		if errors.Is(err, domainkey.ErrNoRecordFound) {
+		if errors.Is(err, domainkey.ErrInvalidVersion) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+		} else if errors.Is(err, domainkey.ErrInvalidKeyType) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key type"}
+		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			return &VerifyResult{
 				status: VerifyStatusPermErr,
 				err:    fmt.Errorf("domain key is not found: %v", err),
@@ -251,6 +270,9 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 			}
 		}
 		domainKey = &domKey
+	}
+	if err := validateDomainKeyPolicy(domainKey, ams.Algorithm); err != nil {
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: err.Error(), domainKey: domainKey}
 	}
 
 	if ams.raw == "" {

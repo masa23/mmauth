@@ -22,7 +22,7 @@ func (d *dnsResolverImpl) ReplaceMacroValues(domainSpec string, ctx MacroContext
 	ptr := ""
 	// MacroClientPTRが含まれる場合はPTRルックアップをする
 	for _, tok := range tokens {
-		if tok.Kind == TokenMacro && tok.Macro.Letter == rune(MacroClientPTR) {
+		if tok.Kind == TokenMacro && unicode.ToLower(tok.Macro.Letter) == rune(MacroClientPTR) {
 			// %{p} は PTR を参照します。ptr メカニズムと同様に、
 			// domain-spec 用の展開（include/redirect/exists 等）では 10-term 制限の対象に含めます。
 			// exp= 用は pyspf 互換を優先して term 制限の対象外にします。
@@ -418,68 +418,20 @@ func expandMacro(me MacroExpr, sender, domain, helo, receiver string, ip net.IP,
 		return "", fmt.Errorf("unknown macro letter: %c", me.Letter)
 	}
 
-	// 分割
-	var labels []string
-	if lower == 'i' {
-		// For 'i' macro, no splitting is done by default
-		// But if 'r' is specified, we need to handle reversal differently based on IP version
-		if me.Reverse {
-			// For 'ir' macro, handle reversal based on IP version
-			if ip.To4() != nil {
-				// For IPv4, reverse the octets
-				parts := strings.Split(raw, ".")
-				for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-					parts[i], parts[j] = parts[j], parts[i]
-				}
-				labels = parts
-			} else if ip.To16() != nil {
-				// For IPv6, the raw value is already in nibble format, just split it
-				labels = strings.Split(raw, ".")
-				// Then reverse the nibbles
-				for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
-					labels[i], labels[j] = labels[j], labels[i]
-				}
-			} else {
-				labels = []string{raw}
-			}
-		} else {
-			// No reversal, just use raw value
-			labels = []string{raw}
-		}
-	} else if lower == 'c' {
-		// For 'c' macro, use the IP in its standard representation
-		if ip.To4() != nil {
-			// For IPv4, split on '.'
-			labels = strings.Split(raw, ".")
-		} else if ip.To16() != nil {
-			// For IPv6, use the standard lowercase representation
-			labels = []string{ip.String()}
-		} else {
-			labels = []string{raw}
-		}
-	} else if me.Delims != "." && me.Delims != "" {
-		// Delimsを使ってsplit - 複数の区切り文字をサポート
-		// Split on any of the delimiter characters
-		labels = []string{raw}
-		for _, delim := range me.Delims {
-			var newLabels []string
-			for _, label := range labels {
-				newLabels = append(newLabels, strings.Split(label, string(delim))...)
-			}
-			labels = newLabels
-		}
-	} else {
-		// cの処理をRFCに準拠するように修正
-		if lower == 'c' && me.Delims == "" {
-			// delimiter指定がなければ'.' splitが基本
-			labels = strings.Split(raw, ".")
-		} else {
-			labels = strings.Split(raw, ".")
-		}
+	// All macro values use the same delimiter, reversal and truncation rules.
+	delims := me.Delims
+	if delims == "" {
+		delims = "."
 	}
-
-	// Handle reversal for non-'i' macros
-	if me.Reverse && lower != 'i' {
+	labels := []string{raw}
+	for _, delim := range delims {
+		var split []string
+		for _, label := range labels {
+			split = append(split, strings.Split(label, string(delim))...)
+		}
+		labels = split
+	}
+	if me.Reverse {
 		for i, j := 0, len(labels)-1; i < j; i, j = i+1, j-1 {
 			labels[i], labels[j] = labels[j], labels[i]
 		}

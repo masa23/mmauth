@@ -93,6 +93,7 @@ func TestParseRecord(t *testing.T) {
 		{
 			raw: "v=DMARC1; p=none; rua=mailto:agg@example.com; ruf=mailto:for@example.com; fo=1:d:s; adkim=s; aspf=r; pct=50; ri=3600; sp=quarantine;",
 			expected: &Record{
+				ReportFormat:       []ReportFormat{ReportFormatAFRF},
 				Version:            "DMARC1",
 				Policy:             PolicyNone,
 				SubdomainPolicy:    PolicyQuarantine,
@@ -109,16 +110,24 @@ func TestParseRecord(t *testing.T) {
 		{
 			raw: "v=DMARC1; p=reject; adkim=r; aspf=s;",
 			expected: &Record{
-				Version:       "DMARC1",
-				Policy:        PolicyReject,
-				AlignmentDKIM: AlignmentRelaxed,
-				AlignmentSPF:  AlignmentStrict,
-				raw:           "v=DMARC1; p=reject; adkim=r; aspf=s;",
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				Percent:        100,
+				Version:        "DMARC1",
+				Policy:         PolicyReject,
+				AlignmentDKIM:  AlignmentRelaxed,
+				AlignmentSPF:   AlignmentStrict,
+				raw:            "v=DMARC1; p=reject; adkim=r; aspf=s;",
 			},
 		},
 		{
 			raw: "v=DMARC1; p=quarantine; pct=100; ri=86400;",
 			expected: &Record{
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
 				Version:        "DMARC1",
 				Policy:         PolicyQuarantine,
 				Percent:        100,
@@ -149,6 +158,12 @@ func TestLookupRecord(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
+				ReportFormat:       []ReportFormat{ReportFormatAFRF},
+				FailureOptions:     []FailureOption{FailureAllFail},
+				ReportInterval:     86400,
+				AlignmentSPF:       AlignmentRelaxed,
+				AlignmentDKIM:      AlignmentRelaxed,
+				Percent:            100,
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []ReportURI{{URI: "mailto:abuse@example.jp", MaxSize: 0}},
@@ -174,9 +189,15 @@ func TestLookupRecord(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
-				Version: "DMARC1",
-				Policy:  "reject",
-				raw:     "v=DMARC1; p=reject;",
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
+				Percent:        100,
+				Version:        "DMARC1",
+				Policy:         "reject",
+				raw:            "v=DMARC1; p=reject;",
 			},
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.example.jp" {
@@ -223,6 +244,12 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
+				ReportFormat:       []ReportFormat{ReportFormatAFRF},
+				FailureOptions:     []FailureOption{FailureAllFail},
+				ReportInterval:     86400,
+				AlignmentSPF:       AlignmentRelaxed,
+				AlignmentDKIM:      AlignmentRelaxed,
+				Percent:            100,
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []ReportURI{{URI: "mailto:abuse@example.jp", MaxSize: 0}},
@@ -240,8 +267,14 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
-				Version: "DMARC1",
-				Policy:  "reject",
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
+				Percent:        100,
+				Version:        "DMARC1",
+				Policy:         "reject",
 				AggregateReportURI: []ReportURI{
 					{URI: "mailto:rua1@example.jp", MaxSize: 0},
 					{URI: "mailto:rua2@example.jp", MaxSize: 0},
@@ -263,10 +296,16 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "sub.example.jp",
 			want: &Record{
+				ReportFormat:      []ReportFormat{ReportFormatAFRF},
+				FailureOptions:    []FailureOption{FailureAllFail},
+				ReportInterval:    86400,
+				AlignmentSPF:      AlignmentRelaxed,
+				AlignmentDKIM:     AlignmentRelaxed,
+				Percent:           100,
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
-				isSubdomainPolicy: true,
+				IsSubdomainPolicy: true,
 				raw:               "v=DMARC1; p=reject; sp=reject;",
 			},
 			resolver: func(name string) ([]string, error) {
@@ -280,10 +319,16 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "sub.sub.example.jp",
 			want: &Record{
+				ReportFormat:      []ReportFormat{ReportFormatAFRF},
+				FailureOptions:    []FailureOption{FailureAllFail},
+				ReportInterval:    86400,
+				AlignmentSPF:      AlignmentRelaxed,
+				AlignmentDKIM:     AlignmentRelaxed,
+				Percent:           100,
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
-				isSubdomainPolicy: true,
+				IsSubdomainPolicy: true,
 				raw:               "v=DMARC1; p=reject; sp=reject;",
 			},
 			resolver: func(name string) ([]string, error) {
@@ -296,31 +341,34 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.sub.example.jp",
-			want: &Record{
-				Version:           "DMARC1",
-				Policy:            "reject",
-				SubdomainPolicy:   "reject",
-				isSubdomainPolicy: true,
-				raw:               "v=DMARC1; p=reject; sp=reject;",
-			},
+			want:   nil,
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.sub.example.jp" {
 					return []string{"v=DMARC1; p=reject; sp=reject;"}, nil
 				}
 				return nil, &net.DNSError{IsNotFound: true}
 			},
-			wantErr: nil,
+			wantErr: ErrNoRecordFound,
 		},
 		{
 			domain: "sub.example.jp",
-			want:   nil,
+			want: &Record{
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
+				Percent:        100,
+				Version:        "DMARC1", Policy: PolicyReject, SubdomainPolicy: PolicyReject, IsSubdomainPolicy: true,
+				raw: "v=DMARC1; p=reject;",
+			},
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.example.jp" {
 					return []string{"v=DMARC1; p=reject;"}, nil
 				}
 				return nil, &net.DNSError{IsNotFound: true}
 			},
-			wantErr: ErrNoRecordFound,
+			wantErr: nil,
 		},
 		{
 			domain: "example.jp",
