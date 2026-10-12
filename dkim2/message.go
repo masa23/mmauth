@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -388,12 +389,69 @@ func validPath(p string, nullOK bool) bool {
 	if p == "<>" {
 		return nullOK
 	}
-	if len(p) < 5 || p[0] != '<' || p[len(p)-1] != '>' || strings.ContainsAny(p, "\r\n\x00") {
+	if len(p) < 3 || p[0] != '<' || p[len(p)-1] != '>' || strings.ContainsAny(p, "\r\n\x00") {
 		return false
 	}
 	inner := p[1 : len(p)-1]
+	if !nullOK && strings.EqualFold(inner, "Postmaster") {
+		return true
+	}
+	if strings.HasPrefix(inner, "@") {
+		route, mailbox, ok := strings.Cut(inner, ":")
+		if !ok || mailbox == "" {
+			return false
+		}
+		for _, domain := range strings.Split(route, ",") {
+			if len(domain) < 2 || domain[0] != '@' || !validDomain(domain[1:]) {
+				return false
+			}
+		}
+		inner = mailbox
+	}
 	at := strings.LastIndexByte(inner, '@')
-	return at > 0 && validDomain(inner[at+1:]) && validLocalPart(inner[:at])
+	return at > 0 && (validDomain(inner[at+1:]) || validAddressLiteral(inner[at+1:])) && validLocalPart(inner[:at])
+}
+
+func validAddressLiteral(s string) bool {
+	if len(s) < 3 || s[0] != '[' || s[len(s)-1] != ']' {
+		return false
+	}
+	value := s[1 : len(s)-1]
+	if strings.HasPrefix(strings.ToLower(value), "ipv6:") {
+		return strings.Contains(value[5:], ":") && net.ParseIP(value[5:]) != nil
+	}
+	if !strings.Contains(value, ":") {
+		parts := strings.Split(value, ".")
+		if len(parts) != 4 {
+			return false
+		}
+		for _, part := range parts {
+			if len(part) < 1 || len(part) > 3 {
+				return false
+			}
+			for i := range part {
+				if part[i] < '0' || part[i] > '9' {
+					return false
+				}
+			}
+			n, _ := strconv.Atoi(part)
+			if n > 255 {
+				return false
+			}
+		}
+		return true
+	}
+	tag, content, ok := strings.Cut(value, ":")
+	if !ok || !validDomain(tag) || strings.Contains(tag, ".") || content == "" {
+		return false
+	}
+	for i := range content {
+		c := content[i]
+		if c < 33 || c > 126 || c == '[' || c == ']' || c == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 func validLocalPart(s string) bool {

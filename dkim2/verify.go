@@ -259,8 +259,20 @@ func equalPath(a, b string) bool {
 	if a == "<>" || b == "<>" {
 		return a == b
 	}
-	ia, ib := strings.LastIndexByte(a, '@'), strings.LastIndexByte(b, '@')
-	return a[:ia] == b[:ib] && strings.EqualFold(a[ia:], b[ib:])
+	return normalizedPath(a) == normalizedPath(b)
+}
+
+func normalizedPath(p string) string {
+	inner := p[1 : len(p)-1]
+	if strings.EqualFold(inner, "Postmaster") {
+		return "<postmaster>"
+	}
+	if strings.HasPrefix(inner, "@") {
+		route, mailbox, _ := strings.Cut(inner, ":")
+		inner = strings.ToLower(route) + ":" + mailbox
+	}
+	at := strings.LastIndexByte(inner, '@')
+	return "<" + inner[:at] + strings.ToLower(inner[at:]) + ">"
 }
 
 func checkEnvelope(envelope Envelope, signatures []Signature, validateNextDomain func(Signature, Envelope) error) error {

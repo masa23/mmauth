@@ -329,6 +329,30 @@ func TestRejectNonNetworkNormalMessageAndInvalidPaths(t *testing.T) {
 	if _, err := Sign(original(), options); err != nil {
 		t.Fatalf("valid quoted local part rejected: %v", err)
 	}
+	options.Envelope.MailFrom = "<alice@example.com>"
+	for _, tc := range []struct{ signed, delivered string }{
+		{"<Postmaster>", "<postmaster>"},
+		{"<bob@[192.0.2.1]>", "<bob@[192.0.2.1]>"},
+		{"<bob@[001.002.003.004]>", "<bob@[001.002.003.004]>"},
+		{"<bob@[IPv6:2001:db8::1]>", "<bob@[IPv6:2001:db8::1]>"},
+		{"<@RELAY.TEST:bob@RELAY.TEST>", "<@relay.test:bob@relay.test>"},
+	} {
+		options.Envelope.RcptTo = []string{tc.signed}
+		wire, err := Sign(original(), options)
+		if err != nil {
+			t.Fatalf("valid RFC 5321 RCPT TO %q rejected: %v", tc.signed, err)
+		}
+		actual := Envelope{MailFrom: options.Envelope.MailFrom, RcptTo: []string{tc.delivered}}
+		if r := Verify(wire, actual, VerifyOptions{Resolver: records{"s1._domainkey.example.com": {keyRecord(key)}}, Now: testTime}); r.Status != Pass {
+			t.Fatalf("valid RFC 5321 RCPT TO %q verification=%s: %v", tc.signed, r.Status, r.Err)
+		}
+	}
+	for _, path := range []string{"<bob@[999.0.0.1]>", "<bob@[IPv6:192.0.2.1]>"} {
+		options.Envelope.RcptTo = []string{path}
+		if _, err := Sign(original(), options); err == nil {
+			t.Fatalf("invalid address literal was signed: %q", path)
+		}
+	}
 }
 
 func TestNextDomainImaginaryHop(t *testing.T) {
