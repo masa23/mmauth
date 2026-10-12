@@ -305,13 +305,19 @@ func TestRejectNonNetworkNormalMessageAndInvalidPaths(t *testing.T) {
 	key := edKey()
 	options := SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}, Timestamp: testTime}
 	for _, wire := range [][]byte{
-		[]byte("From: a@example.com\r\n"),
 		[]byte("From: a@example.com\r\n\r\nline\n"),
 		[]byte("Received: trace\nFrom: a@example.com\r\n\r\nbody\r\n"),
 	} {
 		if _, err := Sign(wire, options); err == nil {
 			t.Fatalf("non-network-normal message was signed: %q", wire)
 		}
+	}
+	headerOnly, err := Sign([]byte("From: Alice <alice@example.com>\r\n"), options)
+	if err != nil {
+		t.Fatalf("RFC 5322 header-only message was rejected: %v", err)
+	}
+	if r := Verify(headerOnly, options.Envelope, VerifyOptions{Resolver: records{"s1._domainkey.example.com": {keyRecord(key)}}, Now: testTime}); r.Status != Pass {
+		t.Fatalf("header-only message verification=%s: %v", r.Status, r.Err)
 	}
 	for _, path := range []string{"<a@@example.com>", "<a b@example.com>", "<a..b@example.com>", "<a;@example.com>"} {
 		options.Envelope.MailFrom = path

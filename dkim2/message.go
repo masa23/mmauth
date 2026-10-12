@@ -71,9 +71,6 @@ type Message struct {
 func Parse(wire []byte) (*Message, error) {
 	m := &Message{}
 	sep := bytes.Index(wire, []byte("\r\n\r\n"))
-	if sep < 0 {
-		return nil, errors.New("dkim2: missing header/body separator")
-	}
 	for i, c := range wire {
 		if c == '\r' && (i+1 >= len(wire) || wire[i+1] != '\n') ||
 			c == '\n' && (i == 0 || wire[i-1] != '\r') {
@@ -81,7 +78,11 @@ func Parse(wire []byte) (*Message, error) {
 		}
 	}
 	var block []byte
-	block, m.Body, m.separator = wire[:sep+2], wire[sep+4:], true
+	if sep >= 0 {
+		block, m.Body, m.separator = wire[:sep+2], wire[sep+4:], true
+	} else {
+		block = wire // RFC 5322 permits a message with only header fields.
+	}
 	if len(block) == 0 {
 		return nil, errors.New("dkim2: message has no header fields")
 	}
