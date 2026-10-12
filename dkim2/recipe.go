@@ -43,7 +43,7 @@ func parseRecipe(encoded string) (recipe, error) {
 		}
 		r.Headers = make(map[string][]recipeStep)
 		for name, value := range entries {
-			if name != strings.ToLower(name) || !validFieldName(name) || unsigned(name) {
+			if name != strings.ToLower(name) || !validFieldName(name) {
 				return recipe{}, fmt.Errorf("dkim2: invalid Recipe header %q", name)
 			}
 			steps, err := parseSteps(value)

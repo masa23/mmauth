@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"net"
 	"strconv"
 	"testing"
@@ -169,12 +170,12 @@ func TestMalformedFieldsAndDNSErrors(t *testing.T) {
 		t.Fatalf("temporary DNS=%s: %v", r.Status, r.Err)
 	}
 	testingRecords := records{"s1._domainkey.example.com": {keyRecord(key) + "; t=y"}}
-	if r := Verify(wire, env, VerifyOptions{Resolver: testingRecords, Now: testTime}); r.Status != Pass {
-		t.Fatalf("valid testing key=%s: %v", r.Status, r.Err)
+	if r := Verify(wire, env, VerifyOptions{Resolver: testingRecords, Now: testTime}); r.Status != None || !r.Testing {
+		t.Fatalf("valid testing key=%s testing=%t: %v", r.Status, r.Testing, r.Err)
 	}
 	changed := bytes.Replace(wire, []byte("hello\r\n"), []byte("tampered\r\n"), 1)
-	if r := Verify(changed, env, VerifyOptions{Resolver: testingRecords, Now: testTime}); r.Status != None {
-		t.Fatalf("testing key mismatch=%s: %v", r.Status, r.Err)
+	if r := Verify(changed, env, VerifyOptions{Resolver: testingRecords, Now: testTime}); r.Status != None || !r.Testing {
+		t.Fatalf("testing key mismatch=%s testing=%t: %v", r.Status, r.Testing, r.Err)
 	}
 	malformed := bytes.Replace(wire, []byte("m=1;"), []byte("m=1; m=2;"), 1)
 	if r := Verify(malformed, env, options); r.Status != PermError {
@@ -251,5 +252,226 @@ func TestMultipleSignaturesAllChecked(t *testing.T) {
 	bad := bytes.Replace(wire, []byte(base64.StdEncoding.EncodeToString(rsaSignature)), []byte(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0}, len(rsaSignature)))), 1)
 	if r := Verify(bad, env, opts); r.Status != Fail {
 		t.Fatalf("one signature invalid=%s: %v", r.Status, r.Err)
+	}
+}
+
+func TestNullReversePathCannotSkipCustody(t *testing.T) {
+	key := edKey()
+	firstEnvelope := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	secondEnvelope := Envelope{"<>", []string{"<carol@destination.test>"}}
+	first, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: firstEnvelope, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondOptions := SignOptions{Domain: "unrelated.test", Selector: "s2", Key: key, Envelope: secondEnvelope, Timestamp: testTime}
+	if _, err := Forward(first, secondOptions); err == nil {
+		t.Fatal("null reverse path bypassed custody when forwarding")
+	}
+	parsed, err := Parse(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := makeSignature(parsed.Instances, parsed.Signatures, 2, secondOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := append([]byte(second), first...)
+	resolver := records{"s1._domainkey.example.com": {keyRecord(key)}, "s2._domainkey.unrelated.test": {keyRecord(key)}}
+	if r := Verify(forged, secondEnvelope, VerifyOptions{Resolver: resolver, Now: testTime}); r.Status != PermError {
+		t.Fatalf("null reverse path bypassed custody in verifier: %s, %v", r.Status, r.Err)
+	}
+}
+
+func TestUnknownKeyTypeCannotFallBackToRSA(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	wire, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "rsa", Key: key, Envelope: env, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PublicKey(&key.PublicKey))
+	for _, record := range []string{"v=DKIM1; k=unknown; p=" + public, "v=DKIM1; k=ed25519:rsa; p=" + public} {
+		resolver := records{"rsa._domainkey.example.com": {record}}
+		if r := Verify(wire, env, VerifyOptions{Resolver: resolver, Now: testTime}); r.Status != PermError {
+			t.Fatalf("invalid k= accepted: %s, %v", r.Status, r.Err)
+		}
+	}
+}
+
+func TestRejectNonNetworkNormalMessageAndInvalidPaths(t *testing.T) {
+	key := edKey()
+	options := SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}, Timestamp: testTime}
+	for _, wire := range [][]byte{
+		[]byte("From: a@example.com\r\n"),
+		[]byte("From: a@example.com\r\n\r\nline\n"),
+		[]byte("Received: trace\nFrom: a@example.com\r\n\r\nbody\r\n"),
+	} {
+		if _, err := Sign(wire, options); err == nil {
+			t.Fatalf("non-network-normal message was signed: %q", wire)
+		}
+	}
+	for _, path := range []string{"<a@@example.com>", "<a b@example.com>", "<a..b@example.com>", "<a;@example.com>"} {
+		options.Envelope.MailFrom = path
+		if _, err := Sign(original(), options); err == nil {
+			t.Fatalf("invalid MAIL FROM was signed: %q", path)
+		}
+	}
+	options.Envelope.MailFrom = `<"a b"@example.com>`
+	if _, err := Sign(original(), options); err != nil {
+		t.Fatalf("valid quoted local part rejected: %v", err)
+	}
+}
+
+func TestNextDomainImaginaryHop(t *testing.T) {
+	key := edKey()
+	in := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	actual := Envelope{"<bounce@relay.test>", []string{"<carol@example.net>"}}
+	resolver := records{"s1._domainkey.example.com": {keyRecord(key)}, "s2._domainkey.relay.test": {keyRecord(key)}, "s3._domainkey.external.test": {keyRecord(key)}}
+	first, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: in, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imaginary, err := Forward(first, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, NextDomain: "external.test", Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(imaginary)
+	if err != nil || parsed.Signatures[1].NextDomain != "external.test" || parsed.Signatures[1].MailFrom != "" {
+		t.Fatalf("nd= signature not encoded correctly: %v, %+v", err, parsed)
+	}
+	if r := Verify(imaginary, actual, VerifyOptions{Resolver: resolver, Now: testTime}); r.Status != PermError {
+		t.Fatalf("latest nd= without policy=%s: %v", r.Status, r.Err)
+	}
+	validated := false
+	validator := func(sig Signature, envelope Envelope) error {
+		validated = true
+		if sig.NextDomain != "external.test" || envelope.MailFrom != actual.MailFrom {
+			return errors.New("unexpected arrangement")
+		}
+		return nil
+	}
+	if r := Verify(imaginary, actual, VerifyOptions{Resolver: resolver, Now: testTime, ValidateNextDomain: validator}); r.Status != Pass || !validated {
+		t.Fatalf("latest nd= with policy=%s: %v", r.Status, r.Err)
+	}
+	if r := Verify(imaginary, actual, VerifyOptions{Resolver: resolver, Now: testTime, ValidateNextDomain: func(Signature, Envelope) error { return errors.New("denied") }}); r.Status != PermError {
+		t.Fatalf("denied nd= arrangement=%s: %v", r.Status, r.Err)
+	}
+	out := Envelope{"<sender@external.test>", []string{"<dest@example.net>"}}
+	forwarded, err := Forward(imaginary, SignOptions{Domain: "external.test", Selector: "s3", Key: key, Envelope: out, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := Verify(forwarded, out, VerifyOptions{Resolver: resolver, Now: testTime}); r.Status != Pass {
+		t.Fatalf("completed nd= chain=%s: %v", r.Status, r.Err)
+	}
+	if _, err := Forward(imaginary, SignOptions{Domain: "wrong.test", Selector: "s3", Key: key, Envelope: Envelope{"<sender@wrong.test>", out.RcptTo}, Timestamp: testTime}); err == nil {
+		t.Fatal("nd= accepted the wrong next signer")
+	}
+}
+
+func TestNullBodyRecipeRequiresExplicitPartialVerification(t *testing.T) {
+	key := edKey()
+	in := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	out := Envelope{"<bounce@relay.test>", []string{"<carol@example.net>"}}
+	resolver := records{"s1._domainkey.example.com": {keyRecord(key)}, "s2._domainkey.relay.test": {keyRecord(key)}}
+	initial, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: in, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified := append(append([]byte(nil), initial...), []byte("footer\r\n")...)
+	options := SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime}
+	if _, err := Revise(modified, []byte(`{"b":null}`), options); err == nil {
+		t.Fatal("null body Recipe accepted without explicit option")
+	}
+	options.AllowNullBodyRecipe = true
+	revised, err := Revise(modified, []byte(`{"b":null}`), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyOptions := VerifyOptions{Resolver: resolver, Now: testTime}
+	if r := Verify(revised, out, verifyOptions); r.Status != PermError {
+		t.Fatalf("null body Recipe without partial policy=%s: %v", r.Status, r.Err)
+	}
+	verifyOptions.AllowPartialBody = true
+	if r := Verify(revised, out, verifyOptions); r.Status != Pass || len(r.UnverifiedBodies) != 1 || r.UnverifiedBodies[0] != 1 {
+		t.Fatalf("partial verification=%s unverified=%v: %v", r.Status, r.UnverifiedBodies, r.Err)
+	}
+	tampered := bytes.Replace(revised, []byte("footer\r\n"), []byte("tampered\r\n"), 1)
+	if r := Verify(tampered, out, verifyOptions); r.Status != Fail {
+		t.Fatalf("latest body tampering under partial policy=%s: %v", r.Status, r.Err)
+	}
+}
+
+func TestCheckedForwardingAuthenticatesIncomingMessage(t *testing.T) {
+	key := edKey()
+	in := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	out := Envelope{"<bounce@relay.test>", []string{"<carol@example.net>"}}
+	first, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: in, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyOptions := VerifyOptions{Resolver: records{"s1._domainkey.example.com": {keyRecord(key)}}, Now: testTime}
+	nextOptions := SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime}
+	if _, err := ForwardChecked(first, in, verifyOptions, nextOptions); err != nil {
+		t.Fatalf("valid incoming message was not forwarded: %v", err)
+	}
+	tampered := bytes.Replace(first, []byte("hello\r\n"), []byte("changed\r\n"), 1)
+	if _, err := ForwardChecked(tampered, in, verifyOptions, nextOptions); err == nil {
+		t.Fatal("tampered incoming message was forwarded")
+	}
+	modified := append(append([]byte(nil), first...), []byte("footer\r\n")...)
+	if _, err := ReviseChecked(first, modified, in, verifyOptions, []byte(`{"b":[{"c":[1,1]}]}`), nextOptions); err != nil {
+		t.Fatalf("valid incoming message was not revised: %v", err)
+	}
+	changedPrior := bytes.Replace(modified, []byte("Message-Instance: m=1;"), []byte("Message-Instance: m=01;"), 1)
+	if _, err := ReviseChecked(first, changedPrior, in, verifyOptions, []byte(`{"b":[{"c":[1,1]}]}`), nextOptions); err == nil {
+		t.Fatal("changed prior DKIM2 field was signed")
+	}
+}
+
+func TestReplayHookAfterAuthentication(t *testing.T) {
+	key := edKey()
+	env := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	resolver := records{"s1._domainkey.example.com": {keyRecord(key)}}
+	wire, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: env, Timestamp: testTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	calls := 0
+	options := VerifyOptions{Resolver: resolver, Now: testTime, ReplayCheck: func(id string) (bool, error) {
+		calls++
+		if id == "" {
+			t.Fatal("empty replay ID")
+		}
+		duplicate := seen[id]
+		seen[id] = true
+		return duplicate, nil
+	}}
+	first := Verify(wire, env, options)
+	if first.Status != Pass || first.ReplayID == "" {
+		t.Fatalf("first delivery=%s id=%q: %v", first.Status, first.ReplayID, first.Err)
+	}
+	second := Verify(wire, env, options)
+	if second.Status != Fail || second.ReplayID != first.ReplayID || calls != 2 {
+		t.Fatalf("duplicate delivery=%s id=%q calls=%d: %v", second.Status, second.ReplayID, calls, second.Err)
+	}
+	tampered := bytes.Replace(wire, []byte("hello\r\n"), []byte("wrong\r\n"), 1)
+	if r := Verify(tampered, env, options); r.Status != Fail || calls != 2 {
+		t.Fatalf("invalid message entered replay store: %s, calls=%d", r.Status, calls)
+	}
+	exploded, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: env, Timestamp: testTime, Flags: []string{"exploded"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := Verify(exploded, env, options); r.Status != Pass || calls != 2 {
+		t.Fatalf("exploded mail entered replay store: %s, calls=%d", r.Status, calls)
+	}
+	options.ReplayCheck = func(string) (bool, error) { return false, errors.New("storage unavailable") }
+	if r := Verify(wire, env, options); r.Status != TempError {
+		t.Fatalf("unavailable replay store=%s: %v", r.Status, r.Err)
 	}
 }

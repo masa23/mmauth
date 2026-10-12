@@ -194,11 +194,14 @@ func TestDraftDNSKeyRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid := keyRecord(key)
+	pStart := strings.Index(valid, "p=") + len("p=")
+	folded := valid[:pStart+16] + "\r\n\t" + valid[pStart+16:]
 	for _, tc := range []struct {
 		name, record string
 		want         Status
 	}{
 		{"retired h tag ignored", valid, Pass},
+		{"folded public key", folded, Pass},
 		{"retired s tag ignored", valid + "; s=other", Pass},
 		{"revoked", "v=DKIM1; k=ed25519; p=", PermError},
 		{"wrong key algorithm", strings.Replace(valid, "k=ed25519", "k=rsa", 1), PermError},
@@ -218,6 +221,11 @@ func TestDraftDNSKeyRules(t *testing.T) {
 // Section 5 numbers equal-named headers bottom-up and body lines top-down.
 // This vector also checks that copy and data steps retain their stated order.
 func TestDraftRecipeOrderingAndSyntax(t *testing.T) {
+	// Section 5.1 says Recipes for unsigned fields SHOULD NOT be supplied,
+	// so their presence is discouraged but is not a syntax error.
+	if _, err := parseRecipe(base64.StdEncoding.EncodeToString([]byte(`{"h":{"received":[]}}`))); err != nil {
+		t.Fatalf("Recipe for an unsigned field was rejected: %v", err)
+	}
 	m, err := Parse([]byte("From: a@example.com\r\nSubject: top\r\nSubject: bottom\r\n\r\none\r\ntwo\r\nthree\r\n"))
 	if err != nil {
 		t.Fatal(err)

@@ -5,9 +5,13 @@
 // adds a signature when the signed message content has not changed. Revise
 // records a checked Recipe for a modified message. Verify
 // validates the complete signature chain and reconstructable message instances.
-// A null body Recipe cannot authenticate its preceding body and is rejected.
-// Callers must verify an incoming message before changing it or adding a hop;
-// Forward and Revise check hashes and custody but do not fetch prior keys.
-// Replay databases, delivery policy and DSN handling belong to the MTA.
+// A null body Recipe requires explicit opt-in when revising or verifying.
+// Verify reports which preceding bodies could not be authenticated.
+// A highest-numbered nd= signature requires an out-of-band validator callback.
+// DNS keys with t=y produce a None result even if the cryptography succeeds.
+// ForwardChecked and ReviseChecked verify incoming messages before adding a
+// hop; Forward and Revise only check hashes and custody, not prior DNS keys.
+// Verify can call an MTA-owned replay store after authentication. Replay
+// storage, delivery policy and DSN handling belong to the MTA.
 // This API consumes the complete message in memory.
 package dkim2

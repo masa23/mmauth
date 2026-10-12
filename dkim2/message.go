@@ -71,12 +71,17 @@ type Message struct {
 func Parse(wire []byte) (*Message, error) {
 	m := &Message{}
 	sep := bytes.Index(wire, []byte("\r\n\r\n"))
-	var block []byte
-	if sep >= 0 {
-		block, m.Body, m.separator = wire[:sep+2], wire[sep+4:], true
-	} else {
-		block = wire
+	if sep < 0 {
+		return nil, errors.New("dkim2: missing header/body separator")
 	}
+	for i, c := range wire {
+		if c == '\r' && (i+1 >= len(wire) || wire[i+1] != '\n') ||
+			c == '\n' && (i == 0 || wire[i-1] != '\r') {
+			return nil, errors.New("dkim2: non-CRLF line ending")
+		}
+	}
+	var block []byte
+	block, m.Body, m.separator = wire[:sep+2], wire[sep+4:], true
 	if len(block) == 0 {
 		return nil, errors.New("dkim2: message has no header fields")
 	}
@@ -387,7 +392,44 @@ func validPath(p string, nullOK bool) bool {
 	}
 	inner := p[1 : len(p)-1]
 	at := strings.LastIndexByte(inner, '@')
-	return at > 0 && validDomain(inner[at+1:])
+	return at > 0 && validDomain(inner[at+1:]) && validLocalPart(inner[:at])
+}
+
+func validLocalPart(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	if s[0] == '"' {
+		if len(s) < 2 || s[len(s)-1] != '"' {
+			return false
+		}
+		for i := 1; i < len(s)-1; i++ {
+			c := s[i]
+			if c == '\\' {
+				i++
+				if i >= len(s)-1 || s[i] < 32 || s[i] > 126 {
+					return false
+				}
+				continue
+			}
+			if c < 32 || c > 126 || c == '"' || c == '\\' {
+				return false
+			}
+		}
+		return true
+	}
+	if s[0] == '.' || s[len(s)-1] == '.' || strings.Contains(s, "..") {
+		return false
+	}
+	for i := range s {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' ||
+			c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-/=?^_`{|}~.", rune(c)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validNonce(s string) bool {

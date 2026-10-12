@@ -20,10 +20,14 @@ type SignOptions struct {
 	Selector      string
 	Key           crypto.Signer
 	Envelope      Envelope
+	NextDomain    string // Use nd= instead of mf=/rt= for an imaginary hop.
 	Timestamp     time.Time
 	HashAlgorithm string
 	Nonce         string
 	Flags         []string
+	// AllowNullBodyRecipe explicitly allows Revise to use b:null. The caller
+	// must have authenticated the incoming message before changing its body.
+	AllowNullBodyRecipe bool
 }
 
 // Sign adds the first Message-Instance and DKIM2-Signature fields.
@@ -94,6 +98,15 @@ func Forward(wire []byte, options SignOptions) ([]byte, error) {
 	return out, nil
 }
 
+// ForwardChecked authenticates the incoming message before adding a hop.
+// The incoming envelope must be the one used when this message was received.
+func ForwardChecked(wire []byte, incoming Envelope, verification VerifyOptions, options SignOptions) ([]byte, error) {
+	if err := verifyBeforeForwarding(wire, incoming, verification); err != nil {
+		return nil, err
+	}
+	return Forward(wire, options)
+}
+
 // Revise signs a modified message and records a JSON Recipe that reconstructs
 // the previous instance. The input must retain the prior DKIM2 fields. The
 // Recipe is checked against the previous hash before a new signature is made.
@@ -117,11 +130,19 @@ func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
+	nullBody := r.NullBody
+	if nullBody {
+		if !options.AllowNullBodyRecipe {
+			return nil, errors.New("dkim2: null body Recipe requires AllowNullBodyRecipe")
+		}
+		r.HasBody = false // The preceding body cannot be reconstructed here.
+		r.NullBody = false
+	}
 	previous, err := applyRecipe(m, r)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkInstanceHash(previous, m.Instances[len(m.Instances)-1]); err != nil {
+	if err := checkInstanceHashWithBody(previous, m.Instances[len(m.Instances)-1], !nullBody); err != nil {
 		return nil, fmt.Errorf("dkim2: Recipe does not reconstruct previous instance: %w", err)
 	}
 	algorithm := options.HashAlgorithm
@@ -150,13 +171,60 @@ func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error)
 	return out, nil
 }
 
+// ReviseChecked authenticates the original message before signing a modified
+// copy. The modified copy must retain every prior DKIM2 field byte for byte.
+func ReviseChecked(original, modified []byte, incoming Envelope, verification VerifyOptions, recipeJSON []byte, options SignOptions) ([]byte, error) {
+	if err := verifyBeforeForwarding(original, incoming, verification); err != nil {
+		return nil, err
+	}
+	before, err := Parse(original)
+	if err != nil {
+		return nil, err
+	}
+	after, err := Parse(modified)
+	if err != nil {
+		return nil, err
+	}
+	if len(before.Instances) != len(after.Instances) || len(before.Signatures) != len(after.Signatures) {
+		return nil, errors.New("dkim2: modified message changed prior DKIM2 fields")
+	}
+	for i := range before.Instances {
+		if before.Instances[i].Raw != after.Instances[i].Raw {
+			return nil, errors.New("dkim2: modified message changed prior Message-Instance field")
+		}
+	}
+	for i := range before.Signatures {
+		if before.Signatures[i].Raw != after.Signatures[i].Raw {
+			return nil, errors.New("dkim2: modified message changed prior DKIM2-Signature field")
+		}
+	}
+	return Revise(modified, recipeJSON, options)
+}
+
+func verifyBeforeForwarding(wire []byte, incoming Envelope, verification VerifyOptions) error {
+	result := Verify(wire, incoming, verification)
+	if result.Status == Pass {
+		return nil
+	}
+	if result.Err != nil {
+		return fmt.Errorf("dkim2: incoming message verification %s: %w", result.Status, result.Err)
+	}
+	return fmt.Errorf("dkim2: incoming message verification %s", result.Status)
+}
+
 func checkForwardDomain(previous Signature, options SignOptions) error {
 	if previous.NextDomain != "" {
 		if !strings.EqualFold(previous.NextDomain, options.Domain) {
 			return errors.New("dkim2: nd= does not match new signing domain")
 		}
-	} else if !recipientDomainMatches(previous.Recipients, pathDomain(options.Envelope.MailFrom)) {
-		return errors.New("dkim2: new MAIL FROM is not covered by the previous RCPT TO")
+	} else {
+		domain := pathDomain(options.Envelope.MailFrom)
+		if options.NextDomain != "" {
+			domain = options.Domain
+		}
+		if !recipientDomainMatches(previous.Recipients, domain) {
+			return errors.New("dkim2: next signer is not covered by the previous RCPT TO")
+		}
 	}
 	return nil
 }
@@ -165,16 +233,22 @@ func validateSignOptions(o SignOptions) error {
 	if !validDomain(o.Domain) || !validDomain(o.Selector) {
 		return errors.New("dkim2: invalid domain or selector")
 	}
-	if !validPath(o.Envelope.MailFrom, true) || len(o.Envelope.RcptTo) == 0 {
-		return errors.New("dkim2: invalid signing envelope")
-	}
-	for _, p := range o.Envelope.RcptTo {
-		if !validPath(p, false) {
-			return errors.New("dkim2: invalid RCPT TO path")
+	if o.NextDomain != "" {
+		if !validDomain(o.NextDomain) || o.Envelope.MailFrom != "" || len(o.Envelope.RcptTo) != 0 {
+			return errors.New("dkim2: nd= requires a domain and no mf=/rt= envelope")
 		}
-	}
-	if d := pathDomain(o.Envelope.MailFrom); d != "" && !domainMatch(d, o.Domain) {
-		return errors.New("dkim2: d= does not match MAIL FROM domain")
+	} else {
+		if !validPath(o.Envelope.MailFrom, true) || len(o.Envelope.RcptTo) == 0 {
+			return errors.New("dkim2: invalid signing envelope")
+		}
+		for _, p := range o.Envelope.RcptTo {
+			if !validPath(p, false) {
+				return errors.New("dkim2: invalid RCPT TO path")
+			}
+		}
+		if d := pathDomain(o.Envelope.MailFrom); d != "" && !domainMatch(d, o.Domain) {
+			return errors.New("dkim2: d= does not match MAIL FROM domain")
+		}
 	}
 	if o.HashAlgorithm != "" && o.HashAlgorithm != "sha256" && o.HashAlgorithm != "sha512" {
 		return errors.New("dkim2: unsupported hash algorithm")
@@ -222,12 +296,16 @@ func makeSignature(instances []Instance, previous []Signature, index int, o Sign
 	}
 	var fields []string
 	fields = append(fields, fmt.Sprintf("i=%d", index), fmt.Sprintf("m=%d", instances[len(instances)-1].Number), fmt.Sprintf("t=%d", timestamp.Unix()))
-	fields = append(fields, "mf="+foldBase64(base64.StdEncoding.EncodeToString([]byte(o.Envelope.MailFrom))))
-	var recipients []string
-	for _, p := range o.Envelope.RcptTo {
-		recipients = append(recipients, foldBase64(base64.StdEncoding.EncodeToString([]byte(p))))
+	if o.NextDomain != "" {
+		fields = append(fields, "nd="+o.NextDomain)
+	} else {
+		fields = append(fields, "mf="+foldBase64(base64.StdEncoding.EncodeToString([]byte(o.Envelope.MailFrom))))
+		var recipients []string
+		for _, p := range o.Envelope.RcptTo {
+			recipients = append(recipients, foldBase64(base64.StdEncoding.EncodeToString([]byte(p))))
+		}
+		fields = append(fields, "rt="+strings.Join(recipients, ","))
 	}
-	fields = append(fields, "rt="+strings.Join(recipients, ","))
 	fields = append(fields, "d="+o.Domain)
 	if o.Nonce != "" {
 		fields = append(fields, "n="+o.Nonce)
