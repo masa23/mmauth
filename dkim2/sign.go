@@ -1,0 +1,334 @@
+package dkim2
+
+import (
+	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// SignOptions supplies the private key and SMTP envelope for a DKIM2 hop.
+// Timestamp defaults to the current time; HashAlgorithm defaults to sha256.
+type SignOptions struct {
+	Domain        string
+	Selector      string
+	Key           crypto.Signer
+	Envelope      Envelope
+	Timestamp     time.Time
+	HashAlgorithm string
+	Nonce         string
+	Flags         []string
+}
+
+// Sign adds the first Message-Instance and DKIM2-Signature fields.
+func Sign(wire []byte, options SignOptions) ([]byte, error) {
+	m, err := Parse(wire)
+	if err != nil {
+		return nil, err
+	}
+	if len(m.Instances) != 0 || len(m.Signatures) != 0 {
+		return nil, errors.New("dkim2: message is already signed; use Forward")
+	}
+	if err := validateSignOptions(options); err != nil {
+		return nil, err
+	}
+	algorithm := options.HashAlgorithm
+	if algorithm == "" {
+		algorithm = "sha256"
+	}
+	hh, err := headerDigest(m.Headers, algorithm)
+	if err != nil {
+		return nil, err
+	}
+	bh, err := bodyDigest(m.Body, algorithm)
+	if err != nil {
+		return nil, err
+	}
+	mi := "Message-Instance: m=1; h=" + algorithm + ":" + foldBase64(hh) + ":" + foldBase64(bh) + ";\r\n"
+	inst := Instance{Number: 1, Raw: mi, Hashes: []HashSet{{algorithm, hh, bh}}}
+	sig, err := makeSignature([]Instance{inst}, nil, 1, options)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(mi)+len(sig)+len(wire))
+	out = append(out, sig...)
+	out = append(out, mi...)
+	out = append(out, wire...)
+	return out, nil
+}
+
+// Forward adds a signature for an unchanged message instance. Call Verify on
+// the incoming message before forwarding it; Forward cannot authenticate the
+// existing signatures without the sender's DNS keys.
+func Forward(wire []byte, options SignOptions) ([]byte, error) {
+	m, err := Parse(wire)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStructure(m); err != nil {
+		return nil, err
+	}
+	if err := validateSignOptions(options); err != nil {
+		return nil, err
+	}
+	if err := checkInstanceHash(m, m.Instances[len(m.Instances)-1]); err != nil {
+		return nil, err
+	}
+	previous := m.Signatures[len(m.Signatures)-1]
+	if err := checkForwardDomain(previous, options); err != nil {
+		return nil, err
+	}
+	sig, err := makeSignature(m.Instances, m.Signatures, previous.Index+1, options)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(sig)+len(wire))
+	out = append(out, sig...)
+	out = append(out, wire...)
+	return out, nil
+}
+
+// Revise signs a modified message and records a JSON Recipe that reconstructs
+// the previous instance. The input must retain the prior DKIM2 fields. The
+// Recipe is checked against the previous hash before a new signature is made.
+func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error) {
+	m, err := Parse(wire)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStructure(m); err != nil {
+		return nil, err
+	}
+	if err := validateSignOptions(options); err != nil {
+		return nil, err
+	}
+	previousSig := m.Signatures[len(m.Signatures)-1]
+	if err := checkForwardDomain(previousSig, options); err != nil {
+		return nil, err
+	}
+	encoded := base64.StdEncoding.EncodeToString(recipeJSON)
+	r, err := parseRecipe(encoded)
+	if err != nil {
+		return nil, err
+	}
+	previous, err := applyRecipe(m, r)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkInstanceHash(previous, m.Instances[len(m.Instances)-1]); err != nil {
+		return nil, fmt.Errorf("dkim2: Recipe does not reconstruct previous instance: %w", err)
+	}
+	algorithm := options.HashAlgorithm
+	if algorithm == "" {
+		algorithm = "sha256"
+	}
+	hh, err := headerDigest(m.Headers, algorithm)
+	if err != nil {
+		return nil, err
+	}
+	bh, err := bodyDigest(m.Body, algorithm)
+	if err != nil {
+		return nil, err
+	}
+	number := len(m.Instances) + 1
+	mi := fmt.Sprintf("Message-Instance: m=%d;\r\n\tr=%s;\r\n\th=%s:%s:%s;\r\n", number, foldBase64(encoded), algorithm, foldBase64(hh), foldBase64(bh))
+	newInstances := append(append([]Instance(nil), m.Instances...), Instance{Number: number, Raw: mi, Recipe: encoded, Hashes: []HashSet{{algorithm, hh, bh}}})
+	sig, err := makeSignature(newInstances, m.Signatures, previousSig.Index+1, options)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(sig)+len(mi)+len(wire))
+	out = append(out, sig...)
+	out = append(out, mi...)
+	out = append(out, wire...)
+	return out, nil
+}
+
+func checkForwardDomain(previous Signature, options SignOptions) error {
+	if previous.NextDomain != "" {
+		if !strings.EqualFold(previous.NextDomain, options.Domain) {
+			return errors.New("dkim2: nd= does not match new signing domain")
+		}
+	} else if !recipientDomainMatches(previous.Recipients, pathDomain(options.Envelope.MailFrom)) {
+		return errors.New("dkim2: new MAIL FROM is not covered by the previous RCPT TO")
+	}
+	return nil
+}
+
+func validateSignOptions(o SignOptions) error {
+	if !validDomain(o.Domain) || !validDomain(o.Selector) {
+		return errors.New("dkim2: invalid domain or selector")
+	}
+	if !validPath(o.Envelope.MailFrom, true) || len(o.Envelope.RcptTo) == 0 {
+		return errors.New("dkim2: invalid signing envelope")
+	}
+	for _, p := range o.Envelope.RcptTo {
+		if !validPath(p, false) {
+			return errors.New("dkim2: invalid RCPT TO path")
+		}
+	}
+	if d := pathDomain(o.Envelope.MailFrom); d != "" && !domainMatch(d, o.Domain) {
+		return errors.New("dkim2: d= does not match MAIL FROM domain")
+	}
+	if o.HashAlgorithm != "" && o.HashAlgorithm != "sha256" && o.HashAlgorithm != "sha512" {
+		return errors.New("dkim2: unsupported hash algorithm")
+	}
+	if !validNonce(o.Nonce) {
+		return errors.New("dkim2: invalid nonce")
+	}
+	for _, f := range o.Flags {
+		if f == "" || strings.ContainsAny(f, "\r\n;, \t") {
+			return errors.New("dkim2: invalid flag")
+		}
+	}
+	_, err := keyAlgorithm(o.Key)
+	return err
+}
+
+func keyAlgorithm(key crypto.Signer) (string, error) {
+	if key == nil {
+		return "", errors.New("dkim2: nil signing key")
+	}
+	switch pub := key.Public().(type) {
+	case *rsa.PublicKey:
+		if pub.N.BitLen() < 1024 || pub.E != 65537 {
+			return "", errors.New("dkim2: RSA key must be at least 1024 bits with exponent 65537")
+		}
+		return "rsa-sha256", nil
+	case ed25519.PublicKey:
+		if len(pub) != ed25519.PublicKeySize {
+			return "", errors.New("dkim2: invalid Ed25519 key")
+		}
+		return "ed25519-sha256", nil
+	default:
+		return "", fmt.Errorf("dkim2: unsupported signing key %T", pub)
+	}
+}
+
+func makeSignature(instances []Instance, previous []Signature, index int, o SignOptions) (string, error) {
+	algo, err := keyAlgorithm(o.Key)
+	if err != nil {
+		return "", err
+	}
+	timestamp := o.Timestamp
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	var fields []string
+	fields = append(fields, fmt.Sprintf("i=%d", index), fmt.Sprintf("m=%d", instances[len(instances)-1].Number), fmt.Sprintf("t=%d", timestamp.Unix()))
+	fields = append(fields, "mf="+foldBase64(base64.StdEncoding.EncodeToString([]byte(o.Envelope.MailFrom))))
+	var recipients []string
+	for _, p := range o.Envelope.RcptTo {
+		recipients = append(recipients, foldBase64(base64.StdEncoding.EncodeToString([]byte(p))))
+	}
+	fields = append(fields, "rt="+strings.Join(recipients, ","))
+	fields = append(fields, "d="+o.Domain)
+	if o.Nonce != "" {
+		fields = append(fields, "n="+o.Nonce)
+	}
+	if len(o.Flags) > 0 {
+		fields = append(fields, "f="+strings.Join(o.Flags, ","))
+	}
+	fields = append(fields, "s="+o.Selector+":"+algo+":")
+	template := "DKIM2-Signature: " + strings.Join(fields, ";\r\n\t") + ";\r\n"
+	input, err := signatureInput(instances, previous, template)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(input)
+	var signature []byte
+	switch algo {
+	case "rsa-sha256":
+		signature, err = o.Key.Sign(rand.Reader, hash[:], crypto.SHA256)
+	case "ed25519-sha256":
+		signature, err = o.Key.Sign(rand.Reader, hash[:], crypto.Hash(0))
+	}
+	if err != nil {
+		return "", err
+	}
+	encoded := foldBase64(base64.StdEncoding.EncodeToString(signature))
+	return strings.Replace(template, "s="+o.Selector+":"+algo+":;", "s="+o.Selector+":"+algo+":"+encoded+";", 1), nil
+}
+
+func foldBase64(s string) string {
+	if len(s) <= 64 {
+		return s
+	}
+	var b strings.Builder
+	for len(s) > 64 {
+		b.WriteString(s[:64])
+		b.WriteString("\r\n\t")
+		s = s[64:]
+	}
+	b.WriteString(s)
+	return b.String()
+}
+
+func signatureInput(instances []Instance, previous []Signature, current string) ([]byte, error) {
+	var b strings.Builder
+	for _, inst := range instances {
+		c, err := canonicalHeader(inst.Raw, true)
+		if err != nil {
+			return nil, err
+		}
+		b.WriteString(c)
+	}
+	for _, sig := range previous {
+		c, err := canonicalHeader(sig.Raw, true)
+		if err != nil {
+			return nil, err
+		}
+		b.WriteString(c)
+	}
+	c, err := canonicalHeader(current, true)
+	if err != nil {
+		return nil, err
+	}
+	// In the field being checked, only the base64 signature bytes are removed.
+	c, err = emptySignatureValues(c)
+	if err != nil {
+		return nil, err
+	}
+	b.WriteString(c)
+	return []byte(b.String()), nil
+}
+
+func emptySignatureValues(canonical string) (string, error) {
+	if !strings.HasSuffix(canonical, "\r\n") {
+		return "", errors.New("dkim2: signature field lacks CRLF")
+	}
+	content := strings.TrimSuffix(canonical, "\r\n")
+	name, value, ok := strings.Cut(content, ":")
+	if !ok || name != "dkim2-signature" {
+		return "", errors.New("dkim2: invalid signature field name")
+	}
+	parts := strings.Split(value, ";")
+	found := false
+	for i, part := range parts {
+		if len(part) >= 2 && strings.EqualFold(part[:2], "s=") {
+			if found {
+				return "", errors.New("dkim2: duplicate s= tag")
+			}
+			found = true
+			sets := strings.Split(part[2:], ",")
+			for j, set := range sets {
+				triplet := strings.Split(set, ":")
+				if len(triplet) != 3 {
+					return "", errors.New("dkim2: malformed s= signature set")
+				}
+				sets[j] = triplet[0] + ":" + triplet[1] + ":"
+			}
+			parts[i] = part[:2] + strings.Join(sets, ",")
+		}
+	}
+	if !found {
+		return "", errors.New("dkim2: missing s= tag")
+	}
+	return name + ":" + strings.Join(parts, ";") + "\r\n", nil
+}
