@@ -54,6 +54,25 @@ func TestRFC6376DecodedAUIDUsedForKeyPolicyAndResult(t *testing.T) {
 	}
 }
 
+func TestRFC6376AUIDQuotedPrintableStringRoundTrip(t *testing.T) {
+	const raw = "DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; i=\"a=3Bb\"@example.com; b=YWJj"
+	sig, err := ParseSignature(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig.Identity != "\"a;b\"@example.com" {
+		t.Fatalf("decoded AUID=%q", sig.Identity)
+	}
+	formatted := sig.String()
+	if !strings.Contains(formatted, "i=\"a=3Bb\"@example.com;") {
+		t.Fatalf("AUID was not safely encoded: %q", formatted)
+	}
+	parsed, err := ParseSignature("DKIM-Signature: " + formatted + "\r\n")
+	if err != nil || parsed.Identity != sig.Identity {
+		t.Fatalf("AUID round trip: %v, %v", parsed, err)
+	}
+}
+
 func TestRFC6376SignatureFieldNameBoundary(t *testing.T) {
 	const value = "v=1; a=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj"
 	for _, name := range []string{" DKIM-Signature", "DKIM-Signature "} {

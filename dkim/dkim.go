@@ -109,7 +109,7 @@ func (ds *Signature) GetCanonicalizationAndAlgorithm() *CanonicalizationAndAlgor
 func (ds *Signature) String() string {
 	var optional []string
 	if ds.Identity != "" {
-		optional = append(optional, fmt.Sprintf("        i=%s;\r\n", ds.Identity))
+		optional = append(optional, fmt.Sprintf("        i=%s;\r\n", encodeDKIMIdentity(ds.Identity)))
 	}
 	if ds.Limit > 0 || ds.LimitSet {
 		optional = append(optional, fmt.Sprintf("        l=%d;\r\n", ds.Limit))

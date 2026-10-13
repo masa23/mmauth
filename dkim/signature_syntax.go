@@ -59,6 +59,24 @@ func decodeDKIMIdentity(value string) (string, error) {
 	return out.String(), nil
 }
 
+// encodeDKIMIdentity applies RFC 6376 §2.11 to a semantic AUID when writing
+// the i= tag. In particular, an unencoded semicolon would end the tag value.
+func encodeDKIMIdentity(value string) string {
+	const hex = "0123456789ABCDEF"
+	var out strings.Builder
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if (ch >= '!' && ch <= ':') || ch == '<' || (ch >= '>' && ch <= '~') {
+			out.WriteByte(ch)
+			continue
+		}
+		out.WriteByte('=')
+		out.WriteByte(hex[ch>>4])
+		out.WriteByte(hex[ch&0x0f])
+	}
+	return out.String()
+}
+
 func upperHex(ch byte) int {
 	if ch >= '0' && ch <= '9' {
 		return int(ch - '0')
