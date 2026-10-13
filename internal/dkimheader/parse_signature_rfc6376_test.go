@@ -10,6 +10,7 @@ func TestRFC6376TagListABNFAndFWS(t *testing.T) {
 		valid       bool
 	}{
 		{"ordinary", rfc6376BaseTags, true},
+		{"version after another tag", "a=rsa-sha256; v=1; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", true},
 		{"folded separators", "v=1;\r\n a=rsa-sha256; d=example.com; s=test; h=from; bh=YW\r\n Jj; b=YWJj", true},
 		{"unknown uppercase tag distinct", rfc6376BaseTags + "; W=one; w=two", true},
 		{"empty repeated separator", rfc6376BaseTags + ";; z=one", false},
@@ -21,6 +22,7 @@ func TestRFC6376TagListABNFAndFWS(t *testing.T) {
 		{"CRLF without WSP", "v=1;\r\na=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
 		{"control", rfc6376BaseTags + "; z=a\x01b", false},
 		{"invalid UTF-8", rfc6376BaseTags + "; z=" + string([]byte{0xff}), false},
+		{"non-ASCII unknown tag", rfc6376BaseTags + "; z=é", false},
 		{"uppercase required tag ignored", "V=1; a=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

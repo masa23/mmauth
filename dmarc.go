@@ -152,6 +152,9 @@ func authorDomainsFromHeaders(fields headers) ([]string, error) {
 	}
 	from = strings.TrimSpace(from)
 	from = strings.NewReplacer("\r\n ", " ", "\r\n\t", " ").Replace(from)
+	if hasTopLevelGroupColon(from) {
+		return nil, fmt.Errorf("RFC5322.From contains a group instead of a mailbox-list")
+	}
 	addresses, err := mail.ParseAddressList(from)
 	if err != nil || len(addresses) == 0 {
 		return nil, fmt.Errorf("RFC5322.From contains no valid mailbox")
@@ -173,4 +176,57 @@ func authorDomainsFromHeaders(fields headers) ([]string, error) {
 	// LookupRecordWithSubdomainFallback normalizes IDNs to A-labels; return
 	// the original domain here for alignment's equivalent normalization.
 	return domains, nil
+}
+
+// RFC 5322 From is a mailbox-list. A colon outside quoted strings, comments,
+// angle addresses, or address literals starts a group, which is only valid in
+// an address-list.
+func hasTopLevelGroupColon(value string) bool {
+	quoted, escaped := false, false
+	commentDepth, angleDepth, literalDepth := 0, 0, 0
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if (quoted || commentDepth > 0) && ch == '\\' {
+			escaped = true
+			continue
+		}
+		if commentDepth > 0 {
+			switch ch {
+			case '(':
+				commentDepth++
+			case ')':
+				commentDepth--
+			}
+			continue
+		}
+		if quoted {
+			if ch == '"' {
+				quoted = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			quoted = true
+		case '(':
+			commentDepth++
+		case '<':
+			angleDepth++
+		case '>':
+			angleDepth--
+		case '[':
+			literalDepth++
+		case ']':
+			literalDepth--
+		case ':':
+			if angleDepth == 0 && literalDepth == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }

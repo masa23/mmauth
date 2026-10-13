@@ -181,6 +181,9 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 			return fmt.Errorf("unknown key type: %T", key.Public())
 		}
 	}
+	if err := validateSigningCryptoPolicy(ams.Algorithm, key); err != nil {
+		return err
+	}
 
 	ams.Headers = strings.Join(h, ":")
 
@@ -248,6 +251,10 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	}
 	if !fromSigned {
 		return &VerifyResult{status: VerifyStatusPermErr, err: fmt.Errorf("h= tag must include From"), msg: "From is not signed"}
+	}
+	if ams.Algorithm == SignatureAlgorithmRSA_SHA1 {
+		err := fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "historic signature algorithm"}
 	}
 
 	// domainKeyがnilの場合はLookupDomainKeyを実行
@@ -379,6 +386,10 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 
 	switch pub := pub.(type) {
 	case *rsa.PublicKey:
+		if pub.N.BitLen() < 1024 {
+			err := fmt.Errorf("ARC: RSA verification key is shorter than 1024 bits")
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "RSA key is too short", domainKey: domainKey}
+		}
 		// 署名の検証
 		if err := rsa.VerifyPKCS1v15(pub, ams.canonnAndAlgo.HashAlgo, hash.Sum(nil), signature); err != nil {
 			return &VerifyResult{

@@ -3,6 +3,8 @@ package dkim
 import (
 	"strings"
 	"testing"
+
+	"github.com/masa23/mmauth/domainkey"
 )
 
 func TestRFC6376SignatureIdentityAndBase64Syntax(t *testing.T) {
@@ -31,6 +33,24 @@ func TestRFC6376SignatureIdentityAndBase64Syntax(t *testing.T) {
 				t.Fatalf("input=%q error=%v; valid=%t", input, err, tc.valid)
 			}
 		})
+	}
+}
+
+func TestRFC6376DecodedAUIDUsedForKeyPolicyAndResult(t *testing.T) {
+	const raw = "DKIM-Signature: a=rsa-sha256; v=1; d=example.com; s=test; h=from; bh=YWJj; i=user@example=2Ecom; b=YWJj"
+	sig, err := ParseSignature(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sig.Identity != "user@example.com" || sig.raw != raw {
+		t.Fatalf("parsed identity=%q raw=%q", sig.Identity, sig.raw)
+	}
+	if err := sig.validateDomainKeyPolicy(&domainkey.DomainKey{SelectorFlags: []domainkey.SelectorFlags{domainkey.SelectorFlagsStrictDomain}}); err != nil {
+		t.Fatalf("decoded AUID rejected by t=s key: %v", err)
+	}
+	sig.VerifyResult = &VerifyResult{status: VerifyStatusPass}
+	if got := sig.ResultString(); !strings.Contains(got, "header.i=user@example.com") {
+		t.Fatalf("encoded AUID leaked into result: %q", got)
 	}
 }
 

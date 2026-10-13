@@ -83,8 +83,8 @@ func validateSignatureTagListCharacters(value string) error {
 			i++
 			continue
 		}
-		if ch == '\n' || (ch < ' ' && ch != '\t') || ch == 127 {
-			return fmt.Errorf("invalid control character")
+		if ch == '\n' || (ch < ' ' && ch != '\t') || ch > '~' {
+			return fmt.Errorf("invalid tag-list character")
 		}
 	}
 	return nil

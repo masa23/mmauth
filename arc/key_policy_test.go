@@ -116,11 +116,9 @@ func TestARCKeyTypes(t *testing.T) {
 		keyType   domainkey.KeyType
 		want      VerifyStatus
 	}{
-		{"rsa-sha1", SignatureAlgorithmRSA_SHA1, rsaKey, rsaDK, domainkey.KeyTypeRSA, VerifyStatusPass},
 		{"rsa-sha256", SignatureAlgorithmRSA_SHA256, rsaKey, rsaDK, domainkey.KeyTypeRSA, VerifyStatusPass},
 		{"rsa-default", SignatureAlgorithmRSA_SHA256, rsaKey, rsaDK, "", VerifyStatusPass},
 		{"ed25519", SignatureAlgorithmED25519_SHA256, edKey, edDK, domainkey.KeyTypeED25519, VerifyStatusPass},
-		{"rsa-sha1-with-ed25519", SignatureAlgorithmRSA_SHA1, edKey, edDK, domainkey.KeyTypeED25519, VerifyStatusPermErr},
 		{"rsa-sha256-with-ed25519", SignatureAlgorithmRSA_SHA256, edKey, edDK, domainkey.KeyTypeED25519, VerifyStatusPermErr},
 		{"ed25519-with-rsa", SignatureAlgorithmED25519_SHA256, rsaKey, rsaDK, domainkey.KeyTypeRSA, VerifyStatusPermErr},
 		{"ed25519-with-default-rsa", SignatureAlgorithmED25519_SHA256, rsaKey, rsaDK, "", VerifyStatusPermErr},
@@ -192,5 +190,81 @@ func TestARCKeyTypes(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestARCRFC8301RejectsHistoricAlgorithmAndShortRSAKeys(t *testing.T) {
+	strong, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	weak, err := rsa.GenerateKey(rand.Reader, 1023)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const bh = "Ck5SoRNWUpSR4X0COv7R5ub2pUTtl6xz4dTFz++ji4M="
+	headers := []string{"From: a@example.com\r\n"}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", Canonicalization: "relaxed/relaxed", BodyHash: bh}
+	ams.Algorithm = SignatureAlgorithmRSA_SHA1
+	if err := ams.Sign(headers, strong); err == nil {
+		t.Fatal("rsa-sha1 AMS signing succeeded")
+	}
+	ams.Algorithm = SignatureAlgorithmRSA_SHA256
+	if err := ams.Sign(headers, weak); err == nil {
+		t.Fatal("short RSA key signed AMS")
+	}
+	if err := ams.Sign(headers, strong); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Authentication-Results: i=1; example.com; dkim=pass\r\n", "ARC-Message-Signature: "+ams.String()+"\r\n")
+	seal := &ARCSeal{InstanceNumber: 1, Domain: "example.com", Selector: "s", ChainValidation: ChainValidationResultNone}
+	seal.Algorithm = SignatureAlgorithmRSA_SHA1
+	if err := seal.Sign(headers, strong); err == nil {
+		t.Fatal("rsa-sha1 AS signing succeeded")
+	}
+	seal.Algorithm = SignatureAlgorithmRSA_SHA256
+	if err := seal.Sign(headers, weak); err == nil {
+		t.Fatal("short RSA key signed AS")
+	}
+	if err := seal.Sign(headers, strong); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Seal: "+seal.String()+"\r\n")
+	strongDER, err := x509.MarshalPKIXPublicKey(strong.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	weakDER, err := x509.MarshalPKIXPublicKey(weak.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	strongKey := &domainkey.DomainKey{KeyType: domainkey.KeyTypeRSA, PublicKey: base64.StdEncoding.EncodeToString(strongDER)}
+	weakKey := &domainkey.DomainKey{KeyType: domainkey.KeyTypeRSA, PublicKey: base64.StdEncoding.EncodeToString(weakDER)}
+	sigs, err := ParseARCHeaders(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := sigs.GetInstance(1)
+	sig.VerifyWithKeys(headers, bh, weakKey, strongKey)
+	if sig.sealResult.Status() != VerifyStatusPermErr || sig.messageResult.Status() != VerifyStatusPass {
+		t.Fatalf("short AS key: seal=%s AMS=%s", sig.sealResult.Status(), sig.messageResult.Status())
+	}
+	sig.VerifyWithKeys(headers, bh, strongKey, weakKey)
+	if sig.sealResult.Status() != VerifyStatusPass || sig.messageResult.Status() != VerifyStatusPermErr {
+		t.Fatalf("short AMS key: seal=%s AMS=%s", sig.sealResult.Status(), sig.messageResult.Status())
+	}
+	oldAMS, err := ParseARCMessageSignature("ARC-Message-Signature: i=1; a=rsa-sha1; c=relaxed/relaxed; d=example.com; s=s; h=From; bh=" + bh + "; b=AA==\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := oldAMS.Verify(headers, bh, nil); got.Status() != VerifyStatusPermErr {
+		t.Fatalf("rsa-sha1 AMS verification=%s", got.Status())
+	}
+	oldAS, err := ParseARCSeal("ARC-Seal: i=1; a=rsa-sha1; cv=none; d=example.com; s=s; b=AA==\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := oldAS.Verify(headers, nil); got.Status() != VerifyStatusPermErr {
+		t.Fatalf("rsa-sha1 AS verification=%s", got.Status())
 	}
 }

@@ -17,6 +17,7 @@ func TestRFC6376DomainKeyTagListRules(t *testing.T) {
 		{"folded public key", "v=DKIM1; p=AA\t\r\n BB", false, "AABB"},
 		{"bare newline", "v=DKIM1; p=AA\nBB", true, ""},
 		{"invalid UTF-8", "v=DKIM1; x=" + string([]byte{0xff}) + "; p=AAAA", true, ""},
+		{"non-ASCII unknown tag", "v=DKIM1; x=é; p=AAAA", true, ""},
 		{"leading semicolon", ";v=DKIM1; p=AAAA", true, ""},
 		{"consecutive semicolons", "v=DKIM1;; p=AAAA", true, ""},
 		{"two trailing semicolons", "v=DKIM1; p=AAAA;;", true, ""},

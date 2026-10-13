@@ -106,6 +106,25 @@ func TestRFC7489InvalidFromFieldNameIsNotAuthor(t *testing.T) {
 	}
 }
 
+func TestRFC7489FromRequiresMailboxList(t *testing.T) {
+	for _, from := range []string{
+		"From: Friends: a@example.com, b@example.net;\r\n",
+		"From: Friends: a@example.com;\r\n",
+	} {
+		if domains, err := authorDomainsFromHeaders(headers{from}); err == nil {
+			t.Fatalf("group From accepted: %q -> %v", from, domains)
+		}
+	}
+	for _, from := range []string{
+		"From: \"Friends: ops\" <a@example.com>, b@example.net\r\n",
+		"From: a@example.com (note: detail), b@example.net\r\n",
+	} {
+		if domains, err := authorDomainsFromHeaders(headers{from}); err != nil || len(domains) != 2 {
+			t.Fatalf("mailbox-list rejected: %q -> %v, %v", from, domains, err)
+		}
+	}
+}
+
 func TestRFC7489PublicDMARCDKIMIntegration(t *testing.T) {
 	oldDMARC, oldSPF, oldDKIM := dmarc.DefaultResolver, spf.DefaultTXTResolver, domainkey.DefaultResolver
 	t.Cleanup(func() {

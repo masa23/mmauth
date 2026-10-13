@@ -67,7 +67,7 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 					})
 				}
 			}
-			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=" + string([]byte{0xff})} {
+			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=é", "; x=" + string([]byte{0xff})} {
 				if e := tc.parse(tc.raw + suffix); e == nil {
 					t.Errorf("invalid suffix %q accepted", suffix)
 				}

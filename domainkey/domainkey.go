@@ -361,7 +361,7 @@ func validateKeyTagListCharacters(s string) error {
 			i++
 			continue
 		}
-		if c == '\n' || (c < ' ' && c != '\t') || c == 127 {
+		if c == '\n' || (c < ' ' && c != '\t') || c > '~' {
 			return fmt.Errorf("invalid domain key tag-list character")
 		}
 	}

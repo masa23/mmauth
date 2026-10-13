@@ -282,11 +282,11 @@ func ParseSignature(s string) (*Signature, error) {
 		case "h":
 			result.Headers = value
 		case "i":
-			_, err := decodeDKIMIdentity(rawValue)
+			decoded, err := decodeDKIMIdentity(rawValue)
 			if err != nil {
 				return nil, err
 			}
-			result.Identity = stripFWS(rawValue)
+			result.Identity = decoded
 		case "l":
 			limit, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
@@ -371,17 +371,13 @@ func ParseSignature(s string) (*Signature, error) {
 		// i=タグが存在しない場合、デフォルト値として "@" + d を設定
 		result.Identity = "@" + result.Domain
 	} else {
-		decodedIdentity, err := decodeDKIMIdentity(result.Identity)
-		if err != nil {
-			return nil, err
-		}
 		// Identityからドメイン部分を抽出
-		atIndex := strings.LastIndex(decodedIdentity, "@")
-		if atIndex == -1 || atIndex == len(decodedIdentity)-1 {
+		atIndex := strings.LastIndex(result.Identity, "@")
+		if atIndex == -1 || atIndex == len(result.Identity)-1 {
 			return nil, fmt.Errorf("i= tag must contain an @ followed by a domain")
 		}
-		identityDomain := decodedIdentity[atIndex+1:]
-		if !validDKIMLocalPart(decodedIdentity[:atIndex]) {
+		identityDomain := result.Identity[atIndex+1:]
+		if !validDKIMLocalPart(result.Identity[:atIndex]) {
 			return nil, fmt.Errorf("invalid i= local-part")
 		}
 		if !validDKIMDNSName(identityDomain, 2) {

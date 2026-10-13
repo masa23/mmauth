@@ -2,6 +2,7 @@ package arc
 
 import (
 	"crypto"
+	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
 
@@ -154,19 +155,31 @@ func base64Decode(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
+func validateSigningCryptoPolicy(algorithm SignatureAlgorithm, key crypto.Signer) error {
+	if algorithm == SignatureAlgorithmRSA_SHA1 {
+		return fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
+	}
+	if algorithm != SignatureAlgorithmRSA_SHA256 && algorithm != SignatureAlgorithmED25519_SHA256 {
+		return fmt.Errorf("ARC: invalid signing algorithm")
+	}
+	if publicKey, ok := key.Public().(*rsa.PublicKey); ok && publicKey.N.BitLen() < 1024 {
+		return fmt.Errorf("ARC: RSA signing key is shorter than 1024 bits")
+	}
+	return nil
+}
+
 // validateDomainKeyPolicy applies the same key restrictions to AS and AMS.
 func validateDomainKeyPolicy(key *domainkey.DomainKey, algorithm SignatureAlgorithm) error {
+	if algorithm == SignatureAlgorithmRSA_SHA1 {
+		return fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
+	}
 	if key.Version != "" && key.Version != "DKIM1" {
 		return domainkey.ErrInvalidVersion
 	}
 	if !key.IsService(domainkey.ServiceTypeEmail) {
 		return fmt.Errorf("domain key service type is invalid")
 	}
-	want := domainkey.HashAlgoSHA256
-	if algorithm == SignatureAlgorithmRSA_SHA1 {
-		want = domainkey.HashAlgoSHA1
-	}
-	if !key.AllowsHash(want) {
+	if !key.AllowsHash(domainkey.HashAlgoSHA256) {
 		return fmt.Errorf("signature hash algorithm is not allowed by domain key")
 	}
 	keyType := key.KeyType
@@ -174,7 +187,7 @@ func validateDomainKeyPolicy(key *domainkey.DomainKey, algorithm SignatureAlgori
 		keyType = domainkey.KeyTypeRSA
 	}
 	switch algorithm {
-	case SignatureAlgorithmRSA_SHA1, SignatureAlgorithmRSA_SHA256:
+	case SignatureAlgorithmRSA_SHA256:
 		if keyType != domainkey.KeyTypeRSA {
 			return fmt.Errorf("signature key type is not allowed by domain key")
 		}

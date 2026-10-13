@@ -157,6 +157,9 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 			return fmt.Errorf("unknown key type: %T", key.Public())
 		}
 	}
+	if err := validateSigningCryptoPolicy(as.Algorithm, key); err != nil {
+		return err
+	}
 
 	// ハッシュアルゴリズムを設定
 	as.hashAlgo = hashAlgo(as.Algorithm)
@@ -235,6 +238,10 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 			msg:       "chain validation result is fail",
 			domainKey: domainKey,
 		}
+	}
+	if as.Algorithm == SignatureAlgorithmRSA_SHA1 {
+		err := fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "historic signature algorithm", domainKey: domainKey}
 	}
 
 	// domainKeyがnilの場合はLookupDomainKeyを実行
@@ -338,6 +345,10 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 
 	switch pub := pub.(type) {
 	case *rsa.PublicKey:
+		if pub.N.BitLen() < 1024 {
+			err := fmt.Errorf("ARC: RSA verification key is shorter than 1024 bits")
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "RSA key is too short", domainKey: domainKey}
+		}
 		if err := rsa.VerifyPKCS1v15(pub, as.hashAlgo, hash.Sum(nil), signature); err != nil {
 			return &VerifyResult{
 				status:    VerifyStatusFail,

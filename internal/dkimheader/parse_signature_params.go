@@ -92,7 +92,7 @@ func validateTagListCharacters(value string) error {
 			i++
 			continue
 		}
-		if ch == '\n' || (ch < ' ' && ch != '\t') || ch == 127 {
+		if ch == '\n' || (ch < ' ' && ch != '\t') || ch > '~' {
 			return errors.New("invalid DKIM tag-list character")
 		}
 	}
