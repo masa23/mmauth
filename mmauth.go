@@ -80,9 +80,9 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 		}
 	}
 
-	for _, arc := range *a.ARCSignatures {
-		ams := arc.GetARCMessageSignature()
-		if ams == nil {
+	for _, arcSet := range *a.ARCSignatures {
+		ams := arcSet.GetARCMessageSignature()
+		if ams == nil || ams.Algorithm == arc.SignatureAlgorithmRSA_SHA1 {
 			continue
 		}
 		_, body, err := parseHeaderCanonicalization(ams.Canonicalization)
