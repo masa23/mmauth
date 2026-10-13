@@ -374,6 +374,8 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 				if at := strings.LastIndexByte(addr.Address, '@'); at >= 0 {
 					domain := addr.Address[at+1:]
 					if authres.ValidDomainValue(domain) {
+						// RFC 8601 §2.7.2 recommends omitting the local part
+						// because SPF does not authenticate it.
 						fragment += " smtp.mailfrom=" + domain
 					}
 				}

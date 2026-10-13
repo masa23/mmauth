@@ -264,6 +264,8 @@ func skipWSP(s string, i int) int {
 }
 
 func scanKeyword(s string, i int) int {
+	// RFC 8601 refers to RFC 5321's Keyword = Ldh-str: hyphens may lead
+	// but not end a keyword, and underscores are not allowed.
 	start := i
 	for i < len(s) {
 		ch := s[i]

@@ -113,14 +113,22 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 // policy is selected, as described by RFC 7489 §6.6.1.
 func evaluationRank(e dmarc.Evaluation) int {
 	if e.Status == dmarc.EvaluationFail {
+		// Compare the action applied to this message before the published
+		// policy; sampling can reduce a reject policy to quarantine.
+		rank := 3
+		switch e.Disposition {
+		case dmarc.PolicyReject:
+			rank += 6
+		case dmarc.PolicyQuarantine:
+			rank += 3
+		}
 		switch e.Policy {
 		case dmarc.PolicyReject:
-			return 5
+			rank += 2
 		case dmarc.PolicyQuarantine:
-			return 4
-		default:
-			return 3
+			rank++
 		}
+		return rank
 	}
 	if e.Status == dmarc.EvaluationTempError {
 		return 2

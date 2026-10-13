@@ -181,11 +181,13 @@ func TestRFC7489MultivaluedFromSelectsStrictestFailedPolicy(t *testing.T) {
 	t.Cleanup(func() { dmarc.DefaultResolver, spf.DefaultTXTResolver = oldDMARC, oldSPF })
 	spf.DefaultTXTResolver = func(string) ([]string, error) { return []string{"v=spf1 -all"}, nil }
 	for _, tc := range []struct {
-		name, rejectRecord string
-		wantAction         dmarc.PolicyType
+		name, firstRecord, secondRecord string
+		wantAction                      dmarc.PolicyType
 	}{
-		{"reject selected", "v=DMARC1; p=reject", dmarc.PolicyReject},
-		{"reject unsampled", "v=DMARC1; p=reject; pct=0", dmarc.PolicyQuarantine},
+		{"reject selected", "v=DMARC1; p=quarantine", "v=DMARC1; p=reject", dmarc.PolicyReject},
+		{"reject unsampled", "v=DMARC1; p=quarantine", "v=DMARC1; p=reject; pct=0", dmarc.PolicyQuarantine},
+		{"later sampled reject wins", "v=DMARC1; p=reject; pct=0", "v=DMARC1; p=reject", dmarc.PolicyReject},
+		{"earlier sampled reject wins", "v=DMARC1; p=reject", "v=DMARC1; p=reject; pct=0", dmarc.PolicyReject},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var queried []string
@@ -193,9 +195,9 @@ func TestRFC7489MultivaluedFromSelectsStrictestFailedPolicy(t *testing.T) {
 				queried = append(queried, name)
 				switch name {
 				case "_dmarc.example.com":
-					return []string{"v=DMARC1; p=quarantine"}, nil
+					return []string{tc.firstRecord}, nil
 				case "_dmarc.example.net":
-					return []string{tc.rejectRecord}, nil
+					return []string{tc.secondRecord}, nil
 				default:
 					t.Fatalf("unexpected DMARC lookup %q", name)
 					return nil, nil

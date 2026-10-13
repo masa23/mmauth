@@ -30,8 +30,8 @@ func TestRFC6376DKIMKeyLookupQueryAndResults(t *testing.T) {
 		{"no TXT record", nil, nil, "", ErrNoRecordFound},
 		{"NXDOMAIN", nil, &net.DNSError{IsNotFound: true}, "", ErrNoRecordFound},
 		{"temporary DNS failure", nil, &net.DNSError{IsTemporary: true}, "", ErrDNSLookupFailed},
-		// RFC 6376 leaves multiple key TXT records undefined. The library picks
-		// the first usable record returned by the resolver.
+		// RFC 6376 §6.1 step 4 permits choosing one of multiple key records.
+		// This implementation chooses the first usable record.
 		{"multiple keys", []string{"v=DKIM1; k=rsa; p=AQAB", "v=DKIM1; k=rsa; p=AgMB"}, nil, "AQAB", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
