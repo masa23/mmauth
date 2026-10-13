@@ -153,21 +153,26 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 
 	// headersのヘッダ名を抽出し、禁止ヘッダを除外
 	var h []string
-	for _, header := range headers {
-		k, _, ok := strings.Cut(header, ":")
+	for _, field := range headers {
+		k, _, ok := strings.Cut(field, ":")
 		if !ok {
 			continue
 		}
+		name := strings.TrimRight(k, " \t")
+		validated, err := normalizeARCSignedHeaders(name)
+		if err != nil || validated != name {
+			continue
+		}
 		// 小文字に正規化して比較
-		lowerK := strings.ToLower(strings.TrimSpace(k))
+		lowerK := strings.ToLower(name)
 		if forbiddenHeaders[lowerK] {
 			continue
 		}
-		h = append(h, k)
+		h = append(h, name)
 	}
 	fromSigned := false
 	for _, name := range h {
-		if header.EqualASCIIFold(strings.TrimSpace(name), "from") {
+		if header.EqualASCIIFold(name, "from") {
 			fromSigned = true
 		}
 	}
@@ -248,7 +253,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 
 	fromSigned := false
 	for _, name := range strings.Split(ams.Headers, ":") {
-		if header.EqualASCIIFold(strings.TrimSpace(name), "from") {
+		if header.EqualASCIIFold(strings.Trim(name, " \t"), "from") {
 			fromSigned = true
 		}
 	}

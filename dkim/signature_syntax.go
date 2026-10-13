@@ -5,33 +5,6 @@ import (
 	"strings"
 )
 
-// validDKIMBase64 implements RFC 6376 §2.10 base64string. The parser already
-// validates FWS, so only the alphabet and final padding remain to check.
-func validDKIMBase64(value string) bool {
-	value = stripFWS(value)
-	if value == "" {
-		return false
-	}
-	padding := false
-	count := 0
-	for i := 0; i < len(value); i++ {
-		ch := value[i]
-		if ch == '=' {
-			padding = true
-			count++
-			if count > 2 {
-				return false
-			}
-			continue
-		}
-		if padding || !((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-			(ch >= '0' && ch <= '9') || ch == '+' || ch == '/') {
-			return false
-		}
-	}
-	return true
-}
-
 // decodeDKIMIdentity removes FWS and decodes DKIM quoted-printable. The
 // decoded local-part is then checked separately against SMTP mailbox syntax.
 func decodeDKIMIdentity(value string) (string, error) {

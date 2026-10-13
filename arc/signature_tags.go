@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/masa23/mmauth/internal/authres"
+	"github.com/masa23/mmauth/internal/dkimheader"
 	"golang.org/x/net/idna"
 )
 
@@ -64,6 +65,9 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 				}
 				return r
 			}, value)
+			if !(key == "b" && value == "") && !dkimheader.ValidBase64String(value) {
+				return nil, fmt.Errorf("invalid %s %s= base64 value", fieldName, key)
+			}
 		case "h":
 			var err error
 			value, err = normalizeARCSignedHeaders(value)

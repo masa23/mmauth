@@ -271,12 +271,12 @@ func ParseSignature(s string) (*Signature, error) {
 				return nil, fmt.Errorf("invalid algorithm")
 			}
 		case "b":
-			if !validDKIMBase64(rawValue) {
+			if !dkimheader.ValidBase64String(rawValue) {
 				return nil, fmt.Errorf("invalid b= base64 value")
 			}
 			result.Signature = stripFWS(value)
 		case "bh":
-			if !validDKIMBase64(rawValue) {
+			if !dkimheader.ValidBase64String(rawValue) {
 				return nil, fmt.Errorf("invalid bh= base64 value")
 			}
 			result.BodyHash = stripFWS(value)

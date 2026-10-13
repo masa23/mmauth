@@ -161,6 +161,52 @@ func TestRFC8617AMSCanonicalizationTagMustHaveValue(t *testing.T) {
 	}
 }
 
+func TestRFC8617ARCBase64TagSyntax(t *testing.T) {
+	const ams = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h=From; s=s; b=AAAA"
+	const seal = "ARC-Seal: i=1; a=rsa-sha256; cv=none; d=example.com; s=s; b=AAAA"
+	for _, tc := range []struct {
+		name, input string
+		valid       bool
+	}{
+		{"AMS valid FWS", strings.Replace(ams, "bh=AAAA", "bh=AA\r\n AA", 1), true},
+		{"AMS invalid bh alphabet", strings.Replace(ams, "bh=AAAA", "bh=not_base64", 1), false},
+		{"AMS invalid bh padding", strings.Replace(ams, "bh=AAAA", "bh=AA=A", 1), false},
+		{"AMS empty bh", strings.Replace(ams, "bh=AAAA", "bh=", 1), false},
+		{"AMS empty b signing placeholder", strings.Replace(ams, "b=AAAA", "b=", 1), true},
+		{"AMS invalid b alphabet", strings.Replace(ams, "b=AAAA", "b=AA_A", 1), false},
+		{"seal empty b signing placeholder", strings.Replace(seal, "b=AAAA", "b=", 1), true},
+		{"seal invalid b padding", strings.Replace(seal, "b=AAAA", "b=AA===", 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			if strings.HasPrefix(tc.input, "ARC-Seal:") {
+				_, err = ParseARCSeal(tc.input)
+			} else {
+				_, err = ParseARCMessageSignature(tc.input)
+			}
+			if (err == nil) != tc.valid {
+				t.Fatalf("input=%q error=%v valid=%t", tc.input, err, tc.valid)
+			}
+		})
+	}
+}
+
+func TestRFC8617AMSSignerRequiresValidFromField(t *testing.T) {
+	for _, fields := range [][]string{
+		{"From\u00a0: a@example.com\r\n"},
+		{"From\u00a0: a@example.com\r\n", "Subject: test\r\n"},
+	} {
+		ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", BodyHash: "AAAA"}
+		if err := ams.Sign(fields, testKeys.RSAPrivateKey); err == nil {
+			t.Fatalf("signed without a valid From field: %q", fields)
+		}
+	}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", BodyHash: "AAAA"}
+	if err := ams.Sign([]string{"From\u00a0: forged\r\n", "From: real@example.com\r\n"}, testKeys.RSAPrivateKey); err != nil || ams.Headers != "From" {
+		t.Fatalf("valid From was not the sole signed field: h=%q error=%v", ams.Headers, err)
+	}
+}
+
 func TestRFC8617ARCSignedHeaderNamesPreserveInternalWhitespace(t *testing.T) {
 	const prefix = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h="
 	const suffix = "; s=s; b=AAAA\r\n"
