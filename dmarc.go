@@ -15,6 +15,12 @@ import (
 	"github.com/masa23/mmauth/spf"
 )
 
+// Bound DNS work triggered by attacker-controlled headers.
+const (
+	maxDMARCAuthorDomains  = 10
+	maxDMARCDKIMSignatures = 20
+)
+
 // EvaluateDMARC verifies the message's DKIM signatures, checks SPF for the
 // envelope identity, discovers the From domain policy, and evaluates the
 // message under RFC 7489. It requires a completed MMAuth message (Close).
@@ -28,13 +34,7 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 	if err != nil {
 		return result, err
 	}
-	type authorPolicy struct {
-		domain string
-		record *dmarc.Record
-	}
-	var policies []authorPolicy
-	var discoveryErr error
-	var discoveryStatus dmarc.EvaluationStatus
+	canonicalAuthors := make([]string, 0, len(authors))
 	seenCanonical := make(map[string]bool, len(authors))
 	for _, author := range authors {
 		canonical, normalizeErr := dmarc.NormalizeAuthorDomain(author)
@@ -44,7 +44,20 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 		if seenCanonical[canonical] {
 			continue
 		}
+		if len(canonicalAuthors) == maxDMARCAuthorDomains {
+			return result, fmt.Errorf("too many RFC5322.From domains for DMARC evaluation")
+		}
 		seenCanonical[canonical] = true
+		canonicalAuthors = append(canonicalAuthors, canonical)
+	}
+	type authorPolicy struct {
+		domain string
+		record *dmarc.Record
+	}
+	var policies []authorPolicy
+	var discoveryErr error
+	var discoveryStatus dmarc.EvaluationStatus
+	for _, canonical := range canonicalAuthors {
 		record, lookupErr := dmarc.LookupRecordWithSubdomainFallback(canonical)
 		if errors.Is(lookupErr, dmarc.ErrNoRecordFound) {
 			continue
@@ -69,6 +82,9 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 	}
 	if m.AuthenticationHeaders == nil {
 		return result, fmt.Errorf("authentication headers are unavailable")
+	}
+	if m.AuthenticationHeaders.DKIMSignatures != nil && len(*m.AuthenticationHeaders.DKIMSignatures) > maxDMARCDKIMSignatures {
+		return result, fmt.Errorf("too many DKIM signatures for DMARC evaluation")
 	}
 	// A cached result may have used a caller-supplied key. DMARC requires a
 	// signature verified against the signing domain's DNS key.

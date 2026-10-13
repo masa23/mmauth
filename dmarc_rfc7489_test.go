@@ -2,6 +2,7 @@ package mmauth
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -11,6 +12,73 @@ import (
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/spf"
 )
+
+func TestRFC7489DMARCResourceLimitsBoundDNSWork(t *testing.T) {
+	oldDMARC, oldSPF := dmarc.DefaultResolver, spf.DefaultTXTResolver
+	t.Cleanup(func() { dmarc.DefaultResolver, spf.DefaultTXTResolver = oldDMARC, oldSPF })
+	for _, tc := range []struct {
+		name                     string
+		authors, signatures      int
+		duplicateAuthorDomains   bool
+		policyAvailable          bool
+		wantResourceLimitFailure bool
+	}{
+		{"author domains at limit", maxDMARCAuthorDomains, 0, false, false, false},
+		{"author domains over limit", maxDMARCAuthorDomains + 1, 0, false, false, true},
+		{"duplicate author domains", maxDMARCAuthorDomains + 1, 0, true, false, false},
+		{"DKIM signatures at limit", 1, maxDMARCDKIMSignatures, false, true, false},
+		{"DKIM signatures over limit", 1, maxDMARCDKIMSignatures + 1, false, true, true},
+		{"DKIM signatures without policy", 1, maxDMARCDKIMSignatures + 1, false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			queries := 0
+			dmarc.DefaultResolver = func(string) ([]string, error) {
+				queries++
+				if tc.policyAvailable {
+					return []string{"v=DMARC1; p=none"}, nil
+				}
+				return nil, nil
+			}
+			spf.DefaultTXTResolver = func(string) ([]string, error) {
+				if !tc.policyAvailable || tc.wantResourceLimitFailure {
+					t.Fatal("SPF lookup before policy discovery or resource limit validation")
+				}
+				return []string{"v=spf1 -all"}, nil
+			}
+			authors := make([]string, tc.authors)
+			for i := range authors {
+				domain := fmt.Sprintf("d%d.example.com", i)
+				if tc.duplicateAuthorDomains {
+					domain = "example.com"
+				}
+				authors[i] = "a@" + domain
+			}
+			message := "From: " + strings.Join(authors, ", ") + "\r\n" +
+				strings.Repeat("DKIM-Signature: invalid\r\n", tc.signatures) +
+				"Date: Tue, 05 Feb 2019 00:00:00 +0000\r\n\r\nbody\r\n"
+			m := NewMMAuth()
+			if _, err := m.Write([]byte(message)); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, err := m.EvaluateDMARC(net.ParseIP("192.0.2.1"), "helo.example.net", "a@example.net")
+			if (err != nil) != tc.wantResourceLimitFailure {
+				t.Fatalf("evaluation error=%v, want resource limit=%t", err, tc.wantResourceLimitFailure)
+			}
+			if tc.wantResourceLimitFailure && tc.signatures == 0 && queries != 0 {
+				t.Fatalf("author limit evaluated after %d DNS queries", queries)
+			}
+			if tc.policyAvailable && queries != 1 {
+				t.Fatalf("signature limit caused %d policy lookups, want 1", queries)
+			}
+			if !tc.wantResourceLimitFailure && queries == 0 {
+				t.Fatal("valid message performed no policy lookup")
+			}
+		})
+	}
+}
 
 func TestRFC7489PublicDMARCEvaluation(t *testing.T) {
 	oldDMARC, oldSPF := dmarc.DefaultResolver, spf.DefaultTXTResolver
