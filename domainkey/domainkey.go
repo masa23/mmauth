@@ -192,18 +192,27 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 // parseDomainKeyRecords parses DNS TXT records and extracts the domain key.
 // Returns the first valid domain key with a non-empty public key.
 func parseDomainKeyRecords(records []string) (DomainKey, error) {
+	var firstErr error
 	for _, r := range records {
 		domainKey, err := ParseDomainKeyRecord(r)
 		if err != nil {
-			return DomainKey{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if domainKey.PublicKey != "" {
 			return domainKey, nil
 		}
 		// p=が空の場合はキーが撤回されたとみなす
 		if err := isKeyRevoked(r, domainKey); err != nil {
-			return DomainKey{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if firstErr != nil {
+		return DomainKey{}, firstErr
 	}
 	return DomainKey{}, ErrNoRecordFound
 }

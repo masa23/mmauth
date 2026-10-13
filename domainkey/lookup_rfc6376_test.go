@@ -28,6 +28,8 @@ func TestRFC6376DKIMKeyLookupQueryAndResults(t *testing.T) {
 	}{
 		{"one key", []string{"v=DKIM1; k=rsa; p=AQAB"}, nil, "AQAB", nil},
 		{"empty version", []string{"v=; k=rsa; p=AQAB"}, nil, "", ErrInvalidVersion},
+		{"malformed then usable key", []string{"v=; k=rsa; p=AQAB", "v=DKIM1; k=rsa; p=AgMB"}, nil, "AgMB", nil},
+		{"malformed with no usable key", []string{"v=; k=rsa; p=AQAB", "verification=ok"}, nil, "", ErrInvalidVersion},
 		{"no TXT record", nil, nil, "", ErrNoRecordFound},
 		{"NXDOMAIN", nil, &net.DNSError{IsNotFound: true}, "", ErrNoRecordFound},
 		{"temporary DNS failure", nil, &net.DNSError{IsTemporary: true}, "", ErrDNSLookupFailed},
