@@ -92,8 +92,8 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 			if strings.EqualFold(method, "dns/txt") {
 				continue
 			}
-			name, _, _ := strings.Cut(method, "/")
-			if !validHyphenatedWord(name) {
+			name, args, hasArgs := strings.Cut(method, "/")
+			if !validHyphenatedWord(name) || (hasArgs && !validDKIMQuotedPrintable(args)) {
 				return nil, fmt.Errorf("invalid query method tag value: %q", methods)
 			}
 		}
@@ -118,6 +118,32 @@ func validHyphenatedWord(value string) bool {
 		}
 	}
 	return value[len(value)-1] != '-'
+}
+
+// RFC 6376 §2.11 permits FWS and extra '/' characters in extension args,
+// but every '=' must begin an uppercase hexadecimal escape.
+func validDKIMQuotedPrintable(value string) bool {
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		switch ch {
+		case '=':
+			if i+2 >= len(value) || !isUpperHex(value[i+1]) || !isUpperHex(value[i+2]) {
+				return false
+			}
+			i += 2
+		case ' ', '\t', '\r', '\n':
+			// validateTagListCharacters already checked that CRLF is FWS.
+		default:
+			if !((ch >= '!' && ch <= ':') || ch == '<' || (ch >= '>' && ch <= '~')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isUpperHex(ch byte) bool {
+	return ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'F'
 }
 
 func validateTagListCharacters(value string) error {

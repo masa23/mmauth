@@ -79,6 +79,8 @@ func TestRFC6376SignatureQueryMethods(t *testing.T) {
 		{"dns / txt", true},
 		{"dns/t xt", true},
 		{"dns/t xt:dns/txt", false},
+		{"future/a=ZZ:dns/txt", true},
+		{"future/a=20b:dns/txt", false},
 		{"future", true},
 		{"dns/other", true},
 		{"", true},
