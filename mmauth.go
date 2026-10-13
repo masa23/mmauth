@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	crlf = "\r\n"
+	crlf                        = "\r\n"
+	maxDKIMSignaturesPerMessage = 20
 )
 
 type Canonicalization canonical.Canonicalization
@@ -143,6 +144,10 @@ func (m *MMAuth) parsedMail() {
 	m.AuthenticationHeaders, err = parseAuthentications(m.Headers)
 	if err != nil {
 		m.err = fmt.Errorf("failed to parse auth headers: %v", err)
+		return
+	}
+	if signatures := m.AuthenticationHeaders.DKIMSignatures; signatures != nil && len(*signatures) > maxDKIMSignaturesPerMessage {
+		m.err = fmt.Errorf("too many DKIM signatures")
 		return
 	}
 

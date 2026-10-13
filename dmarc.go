@@ -17,8 +17,7 @@ import (
 
 // Bound DNS work triggered by attacker-controlled headers.
 const (
-	maxDMARCAuthorDomains  = 10
-	maxDMARCDKIMSignatures = 20
+	maxDMARCAuthorDomains = 10
 )
 
 // EvaluateDMARC verifies the message's DKIM signatures, checks SPF for the
@@ -83,7 +82,7 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 	if m.AuthenticationHeaders == nil {
 		return result, fmt.Errorf("authentication headers are unavailable")
 	}
-	if m.AuthenticationHeaders.DKIMSignatures != nil && len(*m.AuthenticationHeaders.DKIMSignatures) > maxDMARCDKIMSignatures {
+	if m.AuthenticationHeaders.DKIMSignatures != nil && len(*m.AuthenticationHeaders.DKIMSignatures) > maxDKIMSignaturesPerMessage {
 		return result, fmt.Errorf("too many DKIM signatures for DMARC evaluation")
 	}
 	// A cached result may have used a caller-supplied key. DMARC requires a
@@ -118,11 +117,11 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 		spfIdentity.Passed = spfResult.Status == spf.Pass
 		spfIdentity.TemporaryError = spfResult.Status == spf.TempError
 	}
+	sample, sampleErr := rand.Int(rand.Reader, big.NewInt(100))
+	if sampleErr != nil {
+		return result, fmt.Errorf("failed to sample DMARC policy: %w", sampleErr)
+	}
 	for _, policy := range policies {
-		sample, sampleErr := rand.Int(rand.Reader, big.NewInt(100))
-		if sampleErr != nil {
-			return result, fmt.Errorf("failed to sample DMARC policy: %w", sampleErr)
-		}
 		candidate, evalErr := dmarc.EvaluatePolicy(policy.record, policy.domain, signatures, spfIdentity, int(sample.Int64()))
 		if evalErr != nil {
 			return result, evalErr

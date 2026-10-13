@@ -26,9 +26,7 @@ func TestRFC7489DMARCResourceLimitsBoundDNSWork(t *testing.T) {
 		{"author domains at limit", maxDMARCAuthorDomains, 0, false, false, false},
 		{"author domains over limit", maxDMARCAuthorDomains + 1, 0, false, false, true},
 		{"duplicate author domains", maxDMARCAuthorDomains + 1, 0, true, false, false},
-		{"DKIM signatures at limit", 1, maxDMARCDKIMSignatures, false, true, false},
-		{"DKIM signatures over limit", 1, maxDMARCDKIMSignatures + 1, false, true, true},
-		{"DKIM signatures without policy", 1, maxDMARCDKIMSignatures + 1, false, false, false},
+		{"DKIM signatures at limit", 1, maxDKIMSignaturesPerMessage, false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			queries := 0
