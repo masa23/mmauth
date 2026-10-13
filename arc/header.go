@@ -161,6 +161,10 @@ func arcHeaderInstance(raw string) (int, bool) {
 	if !header.EqualASCIIFold(name, "ARC-Seal") && !header.EqualASCIIFold(name, "ARC-Message-Signature") && !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return 0, false
 	}
+	if header.EqualASCIIFold(name, "ARC-Authentication-Results") {
+		instance, _, err := authres.ParseARCInstance(value)
+		return instance, err == nil
+	}
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
 		if ok && strings.TrimSpace(key) == "i" {

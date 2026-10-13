@@ -47,6 +47,16 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 			if _, err := authres.ParseARCPosition(value); err != nil {
 				return nil, fmt.Errorf("invalid %s i= tag: %w", fieldName, err)
 			}
+		case "t":
+			// AMS and AS inherit DKIM's unsigned 1*12DIGIT timestamp.
+			if len(value) == 0 || len(value) > 12 {
+				return nil, fmt.Errorf("invalid %s t= tag", fieldName)
+			}
+			for i := 0; i < len(value); i++ {
+				if value[i] < '0' || value[i] > '9' {
+					return nil, fmt.Errorf("invalid %s t= tag", fieldName)
+				}
+			}
 		case "b", "bh":
 			value = strings.Map(func(r rune) rune {
 				if r == ' ' || r == '\t' || r == '\r' || r == '\n' {

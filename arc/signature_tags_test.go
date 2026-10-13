@@ -37,6 +37,14 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 			if e := tc.parse(strings.Replace(tc.raw, "i=1;", "i=01;", 1)); e != nil {
 				t.Errorf("RFC 8617 1*2DIGIT position 01 rejected: %v", e)
 			}
+			for _, timestamp := range []string{"-1", "+1", "1234567890123", "1 2"} {
+				if e := tc.parse(tc.raw + "; t=" + timestamp); e == nil {
+					t.Errorf("invalid ARC timestamp %q accepted", timestamp)
+				}
+			}
+			if e := tc.parse(tc.raw + "; t=123456789012"); e != nil {
+				t.Errorf("valid 12-digit ARC timestamp rejected: %v", e)
+			}
 			if e := tc.parse(strings.Replace(tc.raw, ": ", ": ; ", 1)); e == nil {
 				t.Error("leading empty tag accepted")
 			}

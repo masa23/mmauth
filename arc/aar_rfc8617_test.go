@@ -111,3 +111,33 @@ func TestRFC8617ARCInstanceIgnoresUnicodeLookalikeField(t *testing.T) {
 		}
 	}
 }
+
+func TestRFC8617AARInstanceCFWSWithSemicolonInLaterSet(t *testing.T) {
+	key, domainKey := regressionARCKey(t)
+	headers := regressionAddSet(t, []string{"From: a@example.com\r\n"}, 1, ChainValidationResultNone, key)
+	ams := &ARCMessageSignature{InstanceNumber: 2, Domain: "example.com", Selector: "s", Canonicalization: "relaxed/relaxed", BodyHash: "Ck5SoRNWUpSR4X0COv7R5ub2pUTtl6xz4dTFz++ji4M="}
+	if err := ams.Sign(headers, key); err != nil {
+		t.Fatal(err)
+	}
+	aar := "ARC-Authentication-Results: i=2 (edge; relay); example.com; dkim=pass\r\n"
+	headers = append(headers, aar, "ARC-Message-Signature: "+ams.String()+"\r\n")
+	if n, ok := arcHeaderInstance(aar); !ok || n != 2 || !isLaterARCHeader(aar, 1) {
+		t.Fatalf("valid AAR instance CFWS was not recognized: n=%d ok=%t", n, ok)
+	}
+	failSeal := &ARCSeal{InstanceNumber: 2, Domain: "example.com", Selector: "s", ChainValidation: ChainValidationResultFail}
+	if err := failSeal.Sign(headers, key); err != nil {
+		t.Fatalf("cv=fail sealing rejected valid AAR CFWS: %v", err)
+	}
+	seal := &ARCSeal{InstanceNumber: 2, Domain: "example.com", Selector: "s", ChainValidation: ChainValidationResultPass}
+	if err := seal.Sign(headers, key); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Seal: "+seal.String()+"\r\n")
+	chain := regressionVerify(t, headers, domainKey)
+	if result := chain.GetInstance(1).GetARCSeal().Verify(headers, domainKey); result.Status() != VerifyStatusPass {
+		t.Fatalf("earlier ARC-Seal failed after a later AAR with comment: %v", result.Error())
+	}
+	if chain.GetVerifyResult() != VerifyStatusPass {
+		t.Fatalf("two-set chain with AAR CFWS = %s", chain.GetVerifyResult())
+	}
+}

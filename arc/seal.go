@@ -529,6 +529,10 @@ func isLaterARCHeader(raw string, maxInstance int) bool {
 	if !header.EqualASCIIFold(name, "ARC-Seal") && !header.EqualASCIIFold(name, "ARC-Message-Signature") && !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return false
 	}
+	if header.EqualASCIIFold(name, "ARC-Authentication-Results") {
+		instance, _, err := authres.ParseARCInstance(value)
+		return err == nil && instance > maxInstance
+	}
 	instance, found := 0, false
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
