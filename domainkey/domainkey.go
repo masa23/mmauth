@@ -280,6 +280,9 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 		tagCount++
 		switch k {
 		case "v":
+			if v != "DKIM1" {
+				return DomainKey{}, ErrInvalidVersion
+			}
 			key.Version = v
 			continue
 		case "h":

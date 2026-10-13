@@ -14,6 +14,8 @@ func TestRFC6376DomainKeyTagListRules(t *testing.T) {
 		{"version first", "v=DKIM1; p=AAAA", false, "AAAA"},
 		{"trailing semicolon", "v=DKIM1; p=AAAA;", false, "AAAA"},
 		{"version omitted", "p=AAAA", false, "AAAA"},
+		{"empty version", "v=; p=AAAA", true, ""},
+		{"invalid version", "v=DKIM2; p=AAAA", true, ""},
 		{"folded public key", "v=DKIM1; p=AA\t\r\n BB", false, "AABB"},
 		{"bare newline", "v=DKIM1; p=AA\nBB", true, ""},
 		{"invalid UTF-8", "v=DKIM1; x=" + string([]byte{0xff}) + "; p=AAAA", true, ""},

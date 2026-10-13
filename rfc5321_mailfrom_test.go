@@ -25,3 +25,11 @@ func TestRFC5321QuotedPairMailFromPathUsesCorrectIdentity(t *testing.T) {
 		t.Fatalf("quoted pair SPF: status=%s domain=%q lookups=%v", result.Status, spfDomain, queried)
 	}
 }
+
+func TestRFC5321QuotedLocalPartAllowsSpace(t *testing.T) {
+	const sender = `"a b"@example.com`
+	gotSender, domain, err := parseMailFromIdentity("<" + sender + ">")
+	if err != nil || gotSender != sender || domain != "example.com" {
+		t.Fatalf("quoted local part: sender=%q domain=%q error=%v", gotSender, domain, err)
+	}
+}

@@ -349,6 +349,21 @@ func parseMailFromIdentity(mailFrom string) (string, string, error) {
 	if strings.ContainsAny(sender, "\r\n") {
 		return "", "", fmt.Errorf("invalid MAIL FROM")
 	}
+	// An SMTP mailbox has no CFWS. Header address parsing can accept comments
+	// or whitespace that is only valid inside a quoted local part here.
+	inQuotedLocalPart, escaped := false, false
+	for i := 0; i < len(sender); i++ {
+		switch c := sender[i]; {
+		case escaped:
+			escaped = false
+		case inQuotedLocalPart && c == '\\':
+			escaped = true
+		case c == '"':
+			inQuotedLocalPart = !inQuotedLocalPart
+		case !inQuotedLocalPart && (c == ' ' || c == '\t' || c == '(' || c == ')'):
+			return "", "", fmt.Errorf("invalid MAIL FROM")
+		}
+	}
 	addr, err := mail.ParseAddress(sender)
 	if err != nil || addr.Name != "" {
 		return "", "", fmt.Errorf("invalid MAIL FROM")
