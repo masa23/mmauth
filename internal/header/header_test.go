@@ -259,6 +259,16 @@ func TestParseHeaderCanonicalization(t *testing.T) {
 			wantErr:    true,
 		},
 		{
+			name:    "invalid single algorithm",
+			input:   "unknown",
+			wantErr: true,
+		},
+		{
+			name:    "too many algorithms",
+			input:   "simple/simple/relaxed",
+			wantErr: true,
+		},
+		{
 			name:       "invalid body",
 			input:      "simple/invalid",
 			wantHeader: "",

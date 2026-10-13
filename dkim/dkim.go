@@ -120,15 +120,19 @@ func (ds *Signature) String() string {
 	if ds.SignatureExpiration > 0 || ds.expirationSet {
 		optional = append(optional, fmt.Sprintf("        x=%d;\r\n", ds.SignatureExpiration))
 	}
+	canonicalization := ""
+	if ds.Canonicalization != "" {
+		canonicalization = fmt.Sprintf("c=%s; ", ds.Canonicalization)
+	}
 
 	return fmt.Sprintf("a=%s; bh=%s;\r\n"+
-		"        c=%s; d=%s;\r\n"+
+		"        %sd=%s;\r\n"+
 		"        h=%s;\r\n"+
 		"%s"+
 		"        s=%s; t=%d; v=%d;\r\n"+
 		"        b=%s",
 		ds.Algorithm, ds.BodyHash,
-		ds.Canonicalization, ds.Domain,
+		canonicalization, ds.Domain,
 		ds.Headers,
 		strings.Join(optional, ""),
 		ds.Selector, ds.Timestamp, ds.Version,
@@ -204,7 +208,8 @@ func validDKIMSignedHeaders(value string) bool {
 func validateDKIMQueryMethods(value string) error {
 	methods := strings.Split(value, ":")
 	supported := false
-	for _, method := range methods {
+	for _, rawMethod := range methods {
+		method := strings.Trim(rawMethod, " \t\r\n")
 		if method == "" {
 			return fmt.Errorf("invalid q= query method")
 		}
@@ -298,7 +303,7 @@ func ParseSignature(s string) (*Signature, error) {
 			result.Limit = limit
 			result.LimitSet = true
 		case "q":
-			if err := validateDKIMQueryMethods(value); err != nil {
+			if err := validateDKIMQueryMethods(rawValue); err != nil {
 				return nil, err
 			}
 			result.QueryType = value

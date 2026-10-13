@@ -539,7 +539,7 @@ func isLaterARCHeader(raw string, maxInstance int) bool {
 			return false
 		}
 		found = true
-		n, err := strconv.Atoi(header.StripWhiteSpace(value))
+		n, err := authres.ParseARCPosition(strings.TrimSpace(value))
 		if err != nil {
 			return false
 		}

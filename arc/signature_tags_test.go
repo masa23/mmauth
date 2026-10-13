@@ -29,6 +29,14 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 			if e := tc.parse(strings.Replace(tc.raw, "i=1; a=rsa-sha256", "a=rsa-sha256; i=1", 1)); e == nil {
 				t.Error("instance tag outside first position accepted")
 			}
+			for _, number := range []string{"+1", "0001", "00", "51"} {
+				if e := tc.parse(strings.Replace(tc.raw, "i=1;", "i="+number+";", 1)); e == nil {
+					t.Errorf("invalid ARC instance %q accepted", number)
+				}
+			}
+			if e := tc.parse(strings.Replace(tc.raw, "i=1;", "i=01;", 1)); e != nil {
+				t.Errorf("RFC 8617 1*2DIGIT position 01 rejected: %v", e)
+			}
 			if e := tc.parse(strings.Replace(tc.raw, ": ", ": ; ", 1)); e == nil {
 				t.Error("leading empty tag accepted")
 			}

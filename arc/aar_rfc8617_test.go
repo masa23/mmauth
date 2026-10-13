@@ -102,6 +102,9 @@ func TestRFC8617ARCInstanceIgnoresUnicodeLookalikeField(t *testing.T) {
 	for _, raw := range []string{
 		"ARC-Seal: I=2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
 		"ARC-Seal: ı=2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+		"ARC-Seal: i=+2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+		"ARC-Seal: i=002; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+		"ARC-Seal: i=1 2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
 	} {
 		if _, ok := arcHeaderInstance(raw); ok || isLaterARCHeader(raw, 1) {
 			t.Fatalf("unregistered instance tag recognized: %q", raw)

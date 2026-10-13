@@ -75,6 +75,10 @@ func TestRFC6376SignatureQueryMethods(t *testing.T) {
 		{"dns/txt", false},
 		{"future:dns/txt", false},
 		{"dns/txt:future", false},
+		{"future : dns/txt", false},
+		{"dns / txt", true},
+		{"dns/t xt", true},
+		{"dns/t xt:dns/txt", false},
 		{"future", true},
 		{"dns/other", true},
 		{"", true},
@@ -137,5 +141,17 @@ func TestRFC6376SignatureRejectsTrailingControlCharacter(t *testing.T) {
 	}
 	if _, err := ParseSignature(base + "\r\n"); err != nil {
 		t.Fatalf("valid terminal CRLF rejected: %v", err)
+	}
+}
+
+func TestRFC6376ExplicitCanonicalizationRequiresKnownAlgorithm(t *testing.T) {
+	const base = "DKIM-Signature: v=1; a=ed25519-sha256; d=example.com; s=s; h=From; bh=AA==; b=AA=="
+	for _, value := range []string{"unknown", "simple/simple/relaxed", "relaxed /simple", ""} {
+		if _, err := ParseSignature(base + "; c=" + value); err == nil {
+			t.Errorf("invalid c=%q accepted", value)
+		}
+	}
+	if _, err := ParseSignature(base + "; c=relaxed"); err != nil {
+		t.Fatalf("valid single algorithm rejected: %v", err)
 	}
 }

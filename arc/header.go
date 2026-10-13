@@ -2,9 +2,9 @@ package arc
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -164,7 +164,7 @@ func arcHeaderInstance(raw string) (int, bool) {
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
 		if ok && strings.TrimSpace(key) == "i" {
-			n, err := strconv.Atoi(header.StripWhiteSpace(value))
+			n, err := authres.ParseARCPosition(strings.TrimSpace(value))
 			return n, err == nil
 		}
 	}

@@ -6,6 +6,23 @@ import (
 	"strings"
 )
 
+// ParseARCPosition validates RFC 8617 §3.3's 1*2DIGIT position and 1..50 range.
+func ParseARCPosition(number string) (int, error) {
+	if len(number) == 0 || len(number) > 2 {
+		return 0, fmt.Errorf("invalid instance number")
+	}
+	for i := 0; i < len(number); i++ {
+		if number[i] < '0' || number[i] > '9' {
+			return 0, fmt.Errorf("invalid instance number")
+		}
+	}
+	instance, err := strconv.Atoi(number)
+	if err != nil || instance < 1 || instance > 50 {
+		return 0, fmt.Errorf("invalid instance number")
+	}
+	return instance, nil
+}
+
 // ParseARCInstance reads only the ARC instance prefix. ARC chain validation
 // authenticates the remaining payload as raw bytes, even when it is malformed.
 func ParseARCInstance(value string) (int, string, error) {
@@ -55,17 +72,9 @@ func ParseARCInstance(value string) (int, string, error) {
 		return 0, "", fmt.Errorf("AAR instance tag is missing")
 	}
 	number = strings.TrimSpace(number)
-	if len(number) == 0 || len(number) > 2 {
-		return 0, "", fmt.Errorf("invalid instance number")
-	}
-	for i := 0; i < len(number); i++ {
-		if number[i] < '0' || number[i] > '9' {
-			return 0, "", fmt.Errorf("invalid instance number")
-		}
-	}
-	instance, err := strconv.Atoi(number)
-	if err != nil || instance < 1 || instance > 50 {
-		return 0, "", fmt.Errorf("invalid instance number")
+	instance, err := ParseARCPosition(number)
+	if err != nil {
+		return 0, "", err
 	}
 	return instance, value[end+1:], nil
 }

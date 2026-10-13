@@ -76,6 +76,28 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	if strings.IndexAny(params["a"], " \t\r\n") >= 0 {
 		return nil, fmt.Errorf("invalid algorithm tag value: %q", params["a"])
 	}
+	if canonicalization, present := params["c"]; present {
+		// An explicit c= needs an algorithm; the simple/simple default only
+		// applies when c= is absent. RFC 6376 permits no FWS inside this value.
+		if canonicalization == "" || strings.IndexAny(canonicalization, " \t\r\n") >= 0 {
+			return nil, fmt.Errorf("invalid canonicalization tag value: %q", canonicalization)
+		}
+	}
+	if methods, present := params["q"]; present {
+		for _, rawMethod := range strings.Split(methods, ":") {
+			method := strings.Trim(rawMethod, " \t\r\n")
+			if method == "" {
+				return nil, fmt.Errorf("invalid query method tag value: %q", methods)
+			}
+			if strings.EqualFold(method, "dns/txt") {
+				continue
+			}
+			name, _, _ := strings.Cut(method, "/")
+			if !validHyphenatedWord(name) {
+				return nil, fmt.Errorf("invalid query method tag value: %q", methods)
+			}
+		}
+	}
 
 	// Type validation for specific tags
 	if err := validateTagTypes(params); err != nil {
@@ -83,6 +105,19 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	}
 
 	return params, nil
+}
+
+func validHyphenatedWord(value string) bool {
+	if value == "" || !isASCIIAlpha(value[0]) {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		ch := value[i]
+		if !isASCIIAlpha(ch) && (ch < '0' || ch > '9') && ch != '-' {
+			return false
+		}
+	}
+	return value[len(value)-1] != '-'
 }
 
 func validateTagListCharacters(value string) error {

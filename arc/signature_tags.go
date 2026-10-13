@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/masa23/mmauth/internal/authres"
 	"golang.org/x/net/idna"
 )
 
@@ -42,6 +43,10 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 		}
 		value = strings.Trim(value, " \t\r\n")
 		switch key {
+		case "i":
+			if _, err := authres.ParseARCPosition(value); err != nil {
+				return nil, fmt.Errorf("invalid %s i= tag: %w", fieldName, err)
+			}
 		case "b", "bh":
 			value = strings.Map(func(r rune) rune {
 				if r == ' ' || r == '\t' || r == '\r' || r == '\n' {

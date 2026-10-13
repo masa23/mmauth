@@ -208,16 +208,17 @@ func ParseHeaderCanonicalization(s string) (header canonical.Canonicalization, b
 		return canonical.Simple, canonical.Simple, nil
 	}
 	ret := strings.Split(s, "/")
-	if len(ret) != 2 {
-		// 一つしかしていない場合はヘッダーに適用
-		// bodyはsimple
-		return canonical.Canonicalization(ret[0]), canonical.Simple, nil
+	if len(ret) > 2 {
+		return "", "", fmt.Errorf("invalid canonicalization")
 	}
 	switch canonical.Canonicalization(ret[0]) {
 	case canonical.Simple, canonical.Relaxed:
 		header = canonical.Canonicalization(ret[0])
 	default:
 		return "", "", fmt.Errorf("invalid canonicalization")
+	}
+	if len(ret) == 1 {
+		return header, canonical.Simple, nil
 	}
 	switch canonical.Canonicalization(ret[1]) {
 	case canonical.Simple, canonical.Relaxed:
