@@ -150,6 +150,8 @@ func TestRFC7489MalformedMailFromCannotPassSPFAlignment(t *testing.T) {
 		"a@@example.com",
 		"Alice <a@example.com>",
 		"<a@example.com>trailing",
+		"<<a@example.com>>",
+		"<a@example.com>>",
 		"a@example.com ()",
 		"a@example.com ",
 		"a\t@example.com",

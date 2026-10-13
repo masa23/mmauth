@@ -73,21 +73,19 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 						t.Fatal("duplicate tag accepted")
 					}
 				})
-				if tag != "b" {
-					t.Run("empty/"+tag, func(t *testing.T) {
-						name, body, _ := strings.Cut(tc.raw, ": ")
-						fields := strings.Split(body, "; ")
-						for i, field := range fields {
-							if strings.HasPrefix(field, tag+"=") {
-								fields[i] = tag + "="
-							}
+				t.Run("empty/"+tag, func(t *testing.T) {
+					name, body, _ := strings.Cut(tc.raw, ": ")
+					fields := strings.Split(body, "; ")
+					for i, field := range fields {
+						if strings.HasPrefix(field, tag+"=") {
+							fields[i] = tag + "="
 						}
+					}
 
-						if e := tc.parse(name + ": " + strings.Join(fields, "; ")); e == nil {
-							t.Fatal("empty required tag accepted")
-						}
-					})
-				}
+					if e := tc.parse(name + ": " + strings.Join(fields, "; ")); e == nil {
+						t.Fatal("empty required tag accepted")
+					}
+				})
 			}
 			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=" + string([]byte{0xff})} {
 				if e := tc.parse(tc.raw + suffix); e == nil {
@@ -110,9 +108,6 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 				if e := tc.parse(strings.Replace(tc.raw, pair[0], pair[1], 1)); e == nil {
 					t.Errorf("invalid ARC identifier %q accepted", pair[1])
 				}
-			}
-			if e := tc.parse(strings.Replace(tc.raw, "b=AAAA", "b=", 1)); e != nil {
-				t.Fatalf("signing placeholder rejected: %v", e)
 			}
 		})
 	}
@@ -172,9 +167,9 @@ func TestRFC8617ARCBase64TagSyntax(t *testing.T) {
 		{"AMS invalid bh alphabet", strings.Replace(ams, "bh=AAAA", "bh=not_base64", 1), false},
 		{"AMS invalid bh padding", strings.Replace(ams, "bh=AAAA", "bh=AA=A", 1), false},
 		{"AMS empty bh", strings.Replace(ams, "bh=AAAA", "bh=", 1), false},
-		{"AMS empty b signing placeholder", strings.Replace(ams, "b=AAAA", "b=", 1), true},
+		{"AMS empty b", strings.Replace(ams, "b=AAAA", "b=", 1), false},
 		{"AMS invalid b alphabet", strings.Replace(ams, "b=AAAA", "b=AA_A", 1), false},
-		{"seal empty b signing placeholder", strings.Replace(seal, "b=AAAA", "b=", 1), true},
+		{"seal empty b", strings.Replace(seal, "b=AAAA", "b=", 1), false},
 		{"seal invalid b padding", strings.Replace(seal, "b=AAAA", "b=AA===", 1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

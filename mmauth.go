@@ -365,7 +365,7 @@ func parseMailFromIdentity(mailFrom string) (string, string, error) {
 			escaped = true
 		case c == '"':
 			inQuotedLocalPart = !inQuotedLocalPart
-		case !inQuotedLocalPart && (c == ' ' || c == '\t' || c == '(' || c == ')'):
+		case !inQuotedLocalPart && (c == ' ' || c == '\t' || c == '(' || c == ')' || c == '<' || c == '>'):
 			return "", "", fmt.Errorf("invalid MAIL FROM")
 		}
 	}

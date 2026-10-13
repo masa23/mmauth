@@ -15,7 +15,7 @@ type signatureTag struct {
 }
 
 // parseSignatureTags preserves tag order and checks the structure before any
-// algorithm defaults are applied. An empty b= is used by signing placeholders.
+// algorithm defaults are applied.
 func parseSignatureTags(value, fieldName string, required []string) ([]signatureTag, error) {
 	if err := validateSignatureTagListCharacters(value); err != nil {
 		return nil, fmt.Errorf("invalid %s tag-list: %w", fieldName, err)
@@ -65,7 +65,7 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 				}
 				return r
 			}, value)
-			if !(key == "b" && value == "") && !dkimheader.ValidBase64String(value) {
+			if !dkimheader.ValidBase64String(value) {
 				return nil, fmt.Errorf("invalid %s %s= base64 value", fieldName, key)
 			}
 		case "h":
@@ -91,7 +91,7 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 		if !exists {
 			return nil, fmt.Errorf("%s %s tag is missing", fieldName, key)
 		}
-		if value == "" && key != "b" {
+		if value == "" {
 			return nil, fmt.Errorf("%s %s tag is empty", fieldName, key)
 		}
 	}

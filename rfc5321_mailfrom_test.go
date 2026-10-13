@@ -34,6 +34,14 @@ func TestRFC5321QuotedLocalPartAllowsSpace(t *testing.T) {
 	}
 }
 
+func TestRFC5321QuotedLocalPartAllowsAngleBrackets(t *testing.T) {
+	const sender = `"a<b>"@example.com`
+	gotSender, domain, err := parseMailFromIdentity("<" + sender + ">")
+	if err != nil || gotSender != sender || domain != "example.com" {
+		t.Fatalf("quoted local part: sender=%q domain=%q error=%v", gotSender, domain, err)
+	}
+}
+
 func TestRFC7208QuotedLocalPartAtSignUsesCorrectSPFMacroDomain(t *testing.T) {
 	oldTXT, oldIP := spf.DefaultTXTResolver, spf.DefaultIPResolver
 	t.Cleanup(func() { spf.DefaultTXTResolver, spf.DefaultIPResolver = oldTXT, oldIP })
