@@ -87,6 +87,10 @@ func TestRFC8301RejectsRSA_SHA1(t *testing.T) {
 func TestRFC8301RSAKeySizeBoundaries(t *testing.T) {
 	for _, bits := range []int{1023, 1024, 2048, 4096} {
 		t.Run(fmt.Sprint(bits), func(t *testing.T) {
+			if bits < 1024 {
+				// Go 1.24+ requires this only for the weak test fixture.
+				t.Setenv("GODEBUG", "rsa1024min=0")
+			}
 			key, err := rsa.GenerateKey(rand.Reader, bits)
 			if err != nil {
 				t.Fatal(err)

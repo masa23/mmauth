@@ -195,6 +195,8 @@ func TestARCKeyTypes(t *testing.T) {
 }
 
 func TestARCRFC8301RejectsHistoricAlgorithmAndShortRSAKeys(t *testing.T) {
+	// Go 1.24+ requires this switch to create the intentionally weak fixture.
+	t.Setenv("GODEBUG", "rsa1024min=0")
 	strong, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		t.Fatal(err)
