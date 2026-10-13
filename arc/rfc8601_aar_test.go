@@ -29,6 +29,33 @@ func TestRFC8601AARQuotedFoldedAndNestedComments(t *testing.T) {
 	}
 }
 
+func TestRFC8601AARFormatterRejectsInvalidFields(t *testing.T) {
+	valid := ARCAuthenticationResults{InstanceNumber: 1, AuthServId: "mx.example.net", Results: []string{"dkim=pass"}}
+	formatted, err := valid.Format()
+	if err != nil || formatted != "i=1; mx.example.net; dkim=pass" || valid.String() != formatted {
+		t.Fatalf("valid AAR: value=%q error=%v", formatted, err)
+	}
+	for _, tc := range []struct {
+		name string
+		aar  ARCAuthenticationResults
+	}{
+		{"zero instance", ARCAuthenticationResults{InstanceNumber: 0, AuthServId: "mx.example.net"}},
+		{"too many instances", ARCAuthenticationResults{InstanceNumber: 51, AuthServId: "mx.example.net"}},
+		{"authserv-id header injection", ARCAuthenticationResults{InstanceNumber: 1, AuthServId: "mx.example.net\r\nInjected: yes"}},
+		{"result header injection", ARCAuthenticationResults{InstanceNumber: 1, AuthServId: "mx.example.net", Results: []string{"dkim=pass\r\nInjected: yes"}}},
+		{"mixed none and result", ARCAuthenticationResults{InstanceNumber: 1, AuthServId: "mx.example.net", Results: []string{"none", "dkim=pass"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if value, err := tc.aar.Format(); err == nil || value != "" {
+				t.Fatalf("invalid AAR formatted: value=%q error=%v", value, err)
+			}
+			if value := tc.aar.String(); value != "" {
+				t.Fatalf("invalid AAR serialized: %q", value)
+			}
+		})
+	}
+}
+
 func TestRFC8601AARInstanceCommentEscapes(t *testing.T) {
 	const raw = "ARC-Authentication-Results: i=1 (edge \\); relay); mx.example.net; none\r\n"
 	aar, err := ParseARCAuthenticationResults(raw)

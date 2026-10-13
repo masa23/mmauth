@@ -82,13 +82,9 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 			signatures = append(signatures, identity)
 		}
 	}
-	spfResult := evaluateSPF(remoteAddr, helo, mailFrom)
+	spfResult, spfDomain := evaluateSPFIdentity(remoteAddr, helo, mailFrom)
 	m.AuthenticationHeaders.SPFResult = spfResult
-	spfIdentity := dmarc.SPFIdentity{Domain: helo}
-	if mailFrom != "" && mailFrom != "<>" {
-		sender := ParseAddress(mailFrom)
-		spfIdentity.Domain, _ = ParseAddressDomain(sender)
-	}
+	spfIdentity := dmarc.SPFIdentity{Domain: spfDomain}
 	if spfResult != nil {
 		spfIdentity.Passed = spfResult.Status == spf.Pass
 		spfIdentity.TemporaryError = spfResult.Status == spf.TempError

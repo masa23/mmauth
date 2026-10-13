@@ -23,14 +23,23 @@ func (aar *ARCAuthenticationResults) Raw() string {
 	return aar.raw
 }
 
-// ARC-Authentication-Results の文字列化
-// ヘッダ名は含まない
-func (aar ARCAuthenticationResults) String() string {
+// Format validates and returns the AAR field value without its header name.
+func (aar ARCAuthenticationResults) Format() (string, error) {
 	results := aar.Results
 	if len(results) == 0 {
 		results = []string{"none"}
 	}
-	return fmt.Sprintf("i=%d; %s; %s", aar.InstanceNumber, aar.AuthServId, strings.Join(results, ";\r\n        "))
+	value := fmt.Sprintf("i=%d; %s; %s", aar.InstanceNumber, aar.AuthServId, strings.Join(results, ";\r\n        "))
+	if _, err := ParseARCAuthenticationResults("ARC-Authentication-Results: " + value + "\r\n"); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+// String returns the AAR field value, or an empty string for invalid values.
+func (aar ARCAuthenticationResults) String() string {
+	value, _ := aar.Format()
+	return value
 }
 
 // ParseARCAuthenticationResults extracts the instance and the RFC 8601

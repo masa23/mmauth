@@ -68,6 +68,38 @@ func TestRFC7489PublicDMARCEvaluation(t *testing.T) {
 	}
 }
 
+func TestRFC7489MalformedMailFromCannotPassSPFAlignment(t *testing.T) {
+	oldDMARC, oldSPF := dmarc.DefaultResolver, spf.DefaultTXTResolver
+	t.Cleanup(func() { dmarc.DefaultResolver, spf.DefaultTXTResolver = oldDMARC, oldSPF })
+	dmarc.DefaultResolver = func(string) ([]string, error) {
+		return []string{"v=DMARC1; p=reject"}, nil
+	}
+	spfLookups := 0
+	spf.DefaultTXTResolver = func(string) ([]string, error) {
+		spfLookups++
+		return []string{"v=spf1 +all"}, nil
+	}
+	for _, mailFrom := range []string{
+		"a@@example.com",
+		"Alice <a@example.com>",
+		"<a@example.com>trailing",
+	} {
+		t.Run(mailFrom, func(t *testing.T) {
+			m := NewMMAuth()
+			if _, err := m.Write([]byte("From: a@example.com\r\nDate: Tue, 05 Feb 2019 00:00:00 +0000\r\n\r\nbody\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got, err := m.EvaluateDMARC(net.ParseIP("192.0.2.1"), "helo.example.net", mailFrom)
+			if err != nil || got.Status != dmarc.EvaluationFail || got.Disposition != dmarc.PolicyReject || m.AuthenticationHeaders.SPFResult.Status != spf.None || spfLookups != 0 {
+				t.Fatalf("MAIL FROM %q: result=%+v SPF=%+v lookups=%d error=%v", mailFrom, got, m.AuthenticationHeaders.SPFResult, spfLookups, err)
+			}
+		})
+	}
+}
+
 func TestRFC7489InvalidFromFieldNameIsNotAuthor(t *testing.T) {
 	if _, err := authorDomainsFromHeaders(headers{"From : a@example.com\r\n"}); err == nil {
 		t.Fatal("invalid From field name was accepted as an author field")

@@ -339,17 +339,35 @@ func (m *MMAuth) Verify() {
 	}
 }
 
-// evaluateSPF evaluates the MAIL FROM identity. Null reverse paths use HELO.
-func evaluateSPF(remoteAddr net.IP, helo, mailFrom string) *spf.Result {
-	if mailFrom == "" || mailFrom == "<>" {
-		return spf.CheckSPF(remoteAddr, helo, "", helo)
-	}
+// parseMailFromIdentity accepts a mailbox or its SMTP path form, without a
+// display name or trailing data. The domain is shared by SPF and DMARC.
+func parseMailFromIdentity(mailFrom string) (string, string, error) {
 	sender := ParseAddress(mailFrom)
-	domain, err := ParseAddressDomain(sender)
-	if err != nil {
-		return &spf.Result{Status: spf.None, Reason: "invalid MAIL FROM"}
+	if strings.ContainsAny(sender, "\r\n") || (mailFrom != sender && mailFrom != "<"+sender+">") {
+		return "", "", fmt.Errorf("invalid MAIL FROM")
 	}
-	return spf.CheckSPF(remoteAddr, domain, sender, helo)
+	addr, err := mail.ParseAddress(sender)
+	if err != nil || addr.Name != "" {
+		return "", "", fmt.Errorf("invalid MAIL FROM")
+	}
+	at := strings.LastIndexByte(sender, '@')
+	if at < 0 || at == len(sender)-1 {
+		return "", "", fmt.Errorf("invalid MAIL FROM")
+	}
+	return sender, sender[at+1:], nil
+}
+
+// evaluateSPFIdentity evaluates the MAIL FROM identity and returns the same
+// validated domain for DMARC alignment. Null reverse paths use HELO.
+func evaluateSPFIdentity(remoteAddr net.IP, helo, mailFrom string) (*spf.Result, string) {
+	if mailFrom == "" || mailFrom == "<>" {
+		return spf.CheckSPF(remoteAddr, helo, "", helo), helo
+	}
+	sender, domain, err := parseMailFromIdentity(mailFrom)
+	if err != nil {
+		return &spf.Result{Status: spf.None, Reason: "invalid MAIL FROM"}, ""
+	}
+	return spf.CheckSPF(remoteAddr, domain, sender, helo), domain
 }
 
 // 認証結果を配列形式で渡す
@@ -358,7 +376,7 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 		return nil
 	}
 	// SPFチェックを行う
-	spfResult := evaluateSPF(remoteAddr, helo, mailFrom)
+	spfResult, spfDomain := evaluateSPFIdentity(remoteAddr, helo, mailFrom)
 
 	var results []string
 	if spfResult != nil {
@@ -367,19 +385,10 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 			if authres.ValidDomainValue(helo) {
 				fragment += " smtp.helo=" + helo
 			}
-		} else {
-			sender := ParseAddress(mailFrom)
-			if addr, err := mail.ParseAddress(sender); err == nil && addr.Name == "" {
-				// SPF authenticates the MAIL FROM domain, not its local part.
-				if at := strings.LastIndexByte(addr.Address, '@'); at >= 0 {
-					domain := addr.Address[at+1:]
-					if authres.ValidDomainValue(domain) {
-						// RFC 8601 §2.7.2 recommends omitting the local part
-						// because SPF does not authenticate it.
-						fragment += " smtp.mailfrom=" + domain
-					}
-				}
-			}
+		} else if authres.ValidDomainValue(spfDomain) {
+			// RFC 8601 §2.7.2 recommends omitting the local part
+			// because SPF does not authenticate it.
+			fragment += " smtp.mailfrom=" + spfDomain
 		}
 		results = append(results, fragment)
 		m.AuthenticationHeaders.SPFResult = spfResult
