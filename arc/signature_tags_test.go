@@ -114,6 +114,20 @@ func TestARCSignatureRejectsTrailingControlCharacter(t *testing.T) {
 	}
 }
 
+func TestRFC8617ARCSignedHeaderNamesPreserveInternalWhitespace(t *testing.T) {
+	const prefix = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h="
+	const suffix = "; s=s; b=AAAA\r\n"
+	for _, value := range []string{"From:Bad Name", "Fr om", "From::Subject", "From:é"} {
+		if _, err := ParseARCMessageSignature(prefix + value + suffix); err == nil {
+			t.Errorf("invalid h= value %q accepted", value)
+		}
+	}
+	parsed, err := ParseARCMessageSignature(prefix + "From \r\n : \r\n Subject" + suffix)
+	if err != nil || parsed.Headers != "From:Subject" {
+		t.Fatalf("valid FWS around h= delimiter: parsed=%+v, error=%v", parsed, err)
+	}
+}
+
 func TestRFC8617ARCULabelSigningIdentifiersUseALabelDNS(t *testing.T) {
 	key, domainKey := regressionARCKey(t)
 	oldResolver := domainkey.DefaultResolver

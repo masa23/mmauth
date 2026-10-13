@@ -42,13 +42,19 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 		}
 		value = strings.Trim(value, " \t\r\n")
 		switch key {
-		case "b", "bh", "h":
+		case "b", "bh":
 			value = strings.Map(func(r rune) rune {
 				if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
 					return -1
 				}
 				return r
 			}, value)
+		case "h":
+			var err error
+			value, err = normalizeARCSignedHeaders(value)
+			if err != nil {
+				return nil, fmt.Errorf("invalid %s h= tag: %w", fieldName, err)
+			}
 		case "d":
 			if _, err := arcDNSName(value, 2); err != nil {
 				return nil, fmt.Errorf("invalid %s d= tag: %w", fieldName, err)
@@ -88,6 +94,26 @@ func validSignatureTagName(name string) bool {
 
 func isASCIILetter(ch byte) bool {
 	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+}
+
+// RFC 6376 §3.5 allows FWS around h= list delimiters, while each field name
+// must follow the RFC 5322 field-name grammar without embedded whitespace.
+func normalizeARCSignedHeaders(value string) (string, error) {
+	names := strings.Split(value, ":")
+	for i, raw := range names {
+		name := strings.Trim(raw, " \t\r\n")
+		if name == "" {
+			return "", fmt.Errorf("empty signed header name")
+		}
+		for j := 0; j < len(name); j++ {
+			ch := name[j]
+			if ch < '!' || ch > '~' || ch == ':' {
+				return "", fmt.Errorf("invalid signed header name")
+			}
+		}
+		names[i] = name
+	}
+	return strings.Join(names, ":"), nil
 }
 
 // arcDNSName validates the DKIM domain/selector grammar and converts any
