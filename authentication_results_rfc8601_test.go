@@ -54,6 +54,7 @@ func TestRFC8601AuthenticationResultsRejectsMalformedAndInjection(t *testing.T) 
 		"Authentication-Results : mx.example.com; dkim=pass\r\n",
 		"From: mx.example.com; dkim=pass\r\n",
 		"Authentication-Reſults: mx.example.com; none\r\n",
+		"Authentication-Results: \"mx\"1; dkim=pass\r\n",
 	} {
 		if _, err := ParseAuthenticationResults(raw); err == nil {
 			t.Errorf("accepted malformed field %q", raw)

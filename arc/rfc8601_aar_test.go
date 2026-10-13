@@ -107,6 +107,13 @@ func TestRFC8601AARQuotedAuthservIDAndMethodVersion(t *testing.T) {
 	}
 }
 
+func TestRFC8601AARQuotedAuthservIDRequiresCFWSBeforeVersion(t *testing.T) {
+	const raw = "ARC-Authentication-Results: i=1; \"mx\"1; dkim=pass\r\n"
+	if _, err := ParseARCAuthenticationResults(raw); err == nil {
+		t.Fatalf("accepted authserv-id without CFWS before version: %q", raw)
+	}
+}
+
 func TestRFC8601AARInternationalizedIdentity(t *testing.T) {
 	const raw = "ARC-Authentication-Results: i=1; münchen.example; spf=pass smtp.mailfrom=δοκιμή@παράδειγμα.δοκιμή; spf=pass smtp.mailfrom=a=b@example.net\r\n"
 	aar, err := ParseARCAuthenticationResults(raw)

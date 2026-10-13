@@ -159,6 +159,9 @@ func isAuthServID(value string) bool {
 		if !closed {
 			return false
 		}
+		if end < len(value) && value[end] != ' ' && value[end] != '\t' {
+			return false // RFC 8601 requires CFWS before authres-version.
+		}
 	} else {
 		for end < len(value) && value[end] != ' ' && value[end] != '\t' {
 			end++
