@@ -42,6 +42,25 @@ func TestRFC5321QuotedLocalPartAllowsAngleBrackets(t *testing.T) {
 	}
 }
 
+func TestRFC5321SourceRouteUsesMailboxForSPF(t *testing.T) {
+	const path = "<@relay.example,@next.example:user@example.com>"
+	sender, domain, err := parseMailFromIdentity(path)
+	if err != nil || sender != "user@example.com" || domain != "example.com" {
+		t.Fatalf("source route: sender=%q domain=%q error=%v", sender, domain, err)
+	}
+	old := spf.DefaultTXTResolver
+	t.Cleanup(func() { spf.DefaultTXTResolver = old })
+	var queried []string
+	spf.DefaultTXTResolver = func(name string) ([]string, error) {
+		queried = append(queried, name)
+		return []string{"v=spf1 +all"}, nil
+	}
+	result, spfDomain := evaluateSPFIdentity(net.ParseIP("192.0.2.1"), "helo.example.net", path)
+	if result.Status != spf.Pass || spfDomain != "example.com" || len(queried) != 1 || queried[0] != "example.com" {
+		t.Fatalf("source route SPF: status=%s domain=%q lookups=%v", result.Status, spfDomain, queried)
+	}
+}
+
 func TestRFC7208QuotedLocalPartAtSignUsesCorrectSPFMacroDomain(t *testing.T) {
 	oldTXT, oldIP := spf.DefaultTXTResolver, spf.DefaultIPResolver
 	t.Cleanup(func() { spf.DefaultTXTResolver, spf.DefaultIPResolver = oldTXT, oldIP })

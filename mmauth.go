@@ -348,11 +348,27 @@ func (m *MMAuth) Verify() {
 // display name or trailing data. The domain is shared by SPF and DMARC.
 func parseMailFromIdentity(mailFrom string) (string, string, error) {
 	sender := mailFrom
-	if strings.HasPrefix(sender, "<") && strings.HasSuffix(sender, ">") {
+	path := strings.HasPrefix(sender, "<") && strings.HasSuffix(sender, ">")
+	if path {
 		sender = sender[1 : len(sender)-1]
 	}
 	if strings.ContainsAny(sender, "\r\n") {
 		return "", "", fmt.Errorf("invalid MAIL FROM")
+	}
+	if strings.HasPrefix(sender, "@") {
+		if !path {
+			return "", "", fmt.Errorf("invalid MAIL FROM")
+		}
+		route, mailbox, ok := strings.Cut(sender, ":")
+		if !ok || mailbox == "" {
+			return "", "", fmt.Errorf("invalid MAIL FROM")
+		}
+		for _, atDomain := range strings.Split(route, ",") {
+			if !strings.HasPrefix(atDomain, "@") || !validSMTPRouteDomain(atDomain[1:]) {
+				return "", "", fmt.Errorf("invalid MAIL FROM")
+			}
+		}
+		sender = mailbox // RFC 5321 source routes are ignored for SPF identity.
 	}
 	// An SMTP mailbox has no CFWS. Header address parsing can accept comments
 	// or whitespace that is only valid inside a quoted local part here.
@@ -378,6 +394,24 @@ func parseMailFromIdentity(mailFrom string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid MAIL FROM")
 	}
 	return sender, sender[at+1:], nil
+}
+
+func validSMTPRouteDomain(domain string) bool {
+	if domain == "" || len(domain) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			ch := label[i]
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // evaluateSPFIdentity evaluates the MAIL FROM identity and returns the same
