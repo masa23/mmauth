@@ -184,8 +184,61 @@ func TestReadHeaderReadError(t *testing.T) {
 	}
 }
 
+func TestReadHeaderFieldNameValidationAtBothEndings(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+	}{
+		{"missing colon", "NoColon\r\n"},
+		{"empty name", ": value\r\n"},
+		{"space in name", "Bad Name: value\r\n"},
+		{"control in name", "Bad\x00Name: value\r\n"},
+		{"non ASCII name", "X-é: value\r\n"},
+		{"orphan continuation", "\torphan: value\r\n"},
+	} {
+		for _, ending := range []struct {
+			name string
+			text string
+		}{
+			{"EOF", ""},
+			{"separator", "\r\nbody\r\n"},
+		} {
+			t.Run(tc.name+"/"+ending.name, func(t *testing.T) {
+				prefix := "Date: Mon, 12 Oct 2026 00:00:00 +0000\r\n"
+				if tc.name == "orphan continuation" {
+					prefix = ""
+				}
+				input := prefix + tc.field + ending.text
+				_, err := readHeader(bufio.NewReader(strings.NewReader(input)))
+				if err == nil || !strings.Contains(err.Error(), "invalid header field") {
+					t.Fatalf("malformed field accepted: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestReadHeaderLongValidLines(t *testing.T) {
+	for _, length := range []int{78, 998} {
+		field := "X: " + strings.Repeat("a", length-3) + "\r\n"
+		for _, ending := range []string{"", "\r\nbody\r\n"} {
+			reader := bufio.NewReader(strings.NewReader(field + ending))
+			got, err := readHeader(reader)
+			if err != nil || len(got) != 1 || got[0] != field {
+				t.Fatalf("length=%d ending=%q: fields=%q err=%v", length, ending, got, err)
+			}
+			if ending != "" {
+				body, err := io.ReadAll(reader)
+				if err != nil || string(body) != "body\r\n" {
+					t.Fatalf("body changed: %q, %v", body, err)
+				}
+			}
+		}
+	}
+}
+
 func TestMMAuthCloseReturnsParseError(t *testing.T) {
-	for _, input := range []string{"header:value", "not-a-header\r\n", "From: a@example.com\r\nnot-a-header\r\n"} {
+	for _, input := range []string{"header:value", "not-a-header\r\n", "From: a@example.com\r\nnot-a-header\r\n", "From: a@example.com\r\nBad Name: value\r\n\r\nbody\r\n"} {
 		t.Run(input, func(t *testing.T) {
 			m := NewMMAuth()
 			if _, err := m.Write([]byte(input)); err != nil {

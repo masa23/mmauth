@@ -5,21 +5,28 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ParseSignatureParams parses DKIM-Signature header parameters with strict validation
 // according to RFC 6376 requirements.
 func ParseSignatureParams(s string) (map[string]string, error) {
+	if err := validateTagListCharacters(s); err != nil {
+		return nil, err
+	}
 	pairs := strings.Split(s, ";")
 	params := make(map[string]string)
 
 	// Track seen tags to detect duplicates
 	seenTags := make(map[string]bool)
 
-	for _, pair := range pairs {
+	for index, pair := range pairs {
 		trimmedPair := strings.TrimSpace(pair)
 		if trimmedPair == "" {
-			continue
+			if index == len(pairs)-1 && index > 0 {
+				continue // one optional trailing semicolon
+			}
+			return nil, errors.New("malformed header params")
 		}
 
 		key, value, ok := strings.Cut(trimmedPair, "=")
@@ -27,23 +34,14 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 			return nil, errors.New("malformed header params")
 		}
 
-		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedKey := strings.TrimSpace(key)
 
 		// Check for empty tag name
-		if trimmedKey == "" {
+		if !validTagName(trimmedKey) {
 			return nil, errors.New("malformed header params")
 		}
 
-		// Check for excessively long tag name
-		if len(trimmedKey) > 100 {
-			return nil, errors.New("malformed header params")
-		}
-
-		// Check for excessively long tag value
 		trimmedValue := strings.TrimSpace(value)
-		if len(trimmedValue) > 1000 {
-			return nil, errors.New("malformed header params")
-		}
 
 		// Check for duplicate tags (RFC 6376 §3.2 requires meticulous validation)
 		if seenTags[trimmedKey] {
@@ -81,6 +79,43 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	return params, nil
 }
 
+func validateTagListCharacters(value string) error {
+	if !utf8.ValidString(value) {
+		return errors.New("invalid DKIM tag-list UTF-8")
+	}
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch == '\r' {
+			if i+2 >= len(value) || value[i+1] != '\n' || (value[i+2] != ' ' && value[i+2] != '\t') {
+				return errors.New("invalid DKIM tag-list folding")
+			}
+			i++
+			continue
+		}
+		if ch == '\n' || (ch < ' ' && ch != '\t') || ch == 127 {
+			return errors.New("invalid DKIM tag-list character")
+		}
+	}
+	return nil
+}
+
+func validTagName(name string) bool {
+	if name == "" || !isASCIIAlpha(name[0]) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		ch := name[i]
+		if !isASCIIAlpha(ch) && (ch < '0' || ch > '9') && ch != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlpha(ch byte) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+}
+
 // isValidDKIMTag checks if a tag is a recognized DKIM-Signature tag according to RFC 6376
 func isValidDKIMTag(tag string) bool {
 	// Valid DKIM-Signature tags as defined in RFC 6376 §3.5
@@ -108,12 +143,18 @@ func isValidDKIMTag(tag string) bool {
 func validateTagTypes(params map[string]string) error {
 	// Validate t and x tags (timestamps) - must be integers
 	if tVal, exists := params["t"]; exists {
+		if !isUnsignedDecimal(tVal) {
+			return fmt.Errorf("invalid timestamp 't' value: %s", tVal)
+		}
 		if _, err := strconv.ParseInt(tVal, 10, 64); err != nil {
 			return fmt.Errorf("invalid timestamp 't' value: %s", tVal)
 		}
 	}
 
 	if xVal, exists := params["x"]; exists {
+		if !isUnsignedDecimal(xVal) {
+			return fmt.Errorf("invalid expiration 'x' value: %s", xVal)
+		}
 		if _, err := strconv.ParseInt(xVal, 10, 64); err != nil {
 			return fmt.Errorf("invalid expiration 'x' value: %s", xVal)
 		}
@@ -121,6 +162,9 @@ func validateTagTypes(params map[string]string) error {
 
 	// Validate l tag (body length) - must be non-negative integer
 	if lVal, exists := params["l"]; exists {
+		if !isUnsignedDecimal(lVal) {
+			return fmt.Errorf("invalid body length 'l' value: %s", lVal)
+		}
 		l, err := strconv.ParseInt(lVal, 10, 64)
 		if err != nil {
 			return fmt.Errorf("invalid body length 'l' value: %s", lVal)
@@ -135,4 +179,16 @@ func validateTagTypes(params map[string]string) error {
 	}
 
 	return nil
+}
+
+func isUnsignedDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

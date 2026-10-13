@@ -3,6 +3,7 @@ package dmarc
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"reflect"
 	"testing"
@@ -424,6 +425,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "mailto:reports@example.com",
 				MaxSize: 1024,
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -433,6 +435,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "mailto:reports@example.com",
 				MaxSize: 50 << 10, // 51200
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -442,6 +445,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "mailto:reports@example.com",
 				MaxSize: 50 << 20, // 52428800
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -451,6 +455,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "https://reports.example.com/dmarc",
 				MaxSize: 2 << 30, // 2147483648
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -460,6 +465,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "https://reports.example.com/dmarc",
 				MaxSize: 1 << 40, // 1099511627776
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -494,9 +500,13 @@ func TestParseReportURI(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:      "Invalid size - overflow (too large for int64)",
-			uri:       "mailto:reports@example.com!8388608t", // 8,388,608 * 2^40 > MaxInt64 (max 8,388,607t; 8,388,608t already overflows)
-			wantError: true,
+			name: "Valid size above int64 range is saturated",
+			uri:  "mailto:reports@example.com!8388608t",
+			expected: &ReportURI{
+				URI:     "mailto:reports@example.com",
+				MaxSize: math.MaxInt64,
+				HasSize: true,
+			},
 		},
 	}
 
@@ -520,6 +530,9 @@ func TestParseReportURI(t *testing.T) {
 			}
 			if got.MaxSize != tc.expected.MaxSize {
 				t.Errorf("MaxSize mismatch: expected %d, got %d", tc.expected.MaxSize, got.MaxSize)
+			}
+			if got.HasSize != tc.expected.HasSize {
+				t.Errorf("HasSize mismatch: expected %v, got %v", tc.expected.HasSize, got.HasSize)
 			}
 		})
 	}

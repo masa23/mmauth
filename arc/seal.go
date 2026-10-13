@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/masa23/mmauth/domainkey"
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/canonical"
 	"github.com/masa23/mmauth/internal/dkimheader"
 	"github.com/masa23/mmauth/internal/header"
@@ -63,10 +64,11 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 	result.raw = s
 
 	// ヘッダと値に分割
-	k, v := header.ParseHeaderField(s)
-	if !strings.EqualFold(k, "arc-seal") {
+	name, v, ok := strings.Cut(s, ":")
+	if !ok || !strings.EqualFold(name, "ARC-Seal") {
 		return nil, fmt.Errorf("invalid header field")
 	}
+	v = strings.TrimSuffix(v, "\r\n")
 	tags, err := parseSignatureTags(v, "ARC-Seal", []string{"cv", "i", "a", "b", "d", "s"})
 	if err != nil {
 		return nil, err
@@ -78,9 +80,9 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 		// "Note especially that the DKIM "h" tag is NOT allowed and, if found, MUST result in a cv status of "fail""
 		// Also, the "bh" tag is not allowed as ARC-Seal signatures don't cover the message body.
 		// RFC 8617: ARC-Seal に h= は NOT allowed, 見つけたら cv=fail
-		// Normalize key to lowercase for comparison to catch case-insensitive matches
-		if strings.ToLower(key) == "h" || strings.ToLower(key) == "bh" {
-			result.ChainValidation = ChainValidationResultFail
+		// RFC 6376 §3.2 treats tag names as case-sensitive; H and BH are
+		// unknown tags, while the defined h and bh tags are forbidden here.
+		if key == "h" || key == "bh" {
 			result.invalid = true
 			// エラーを返さずに、パースを継続
 			continue
@@ -119,11 +121,15 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 			}
 			result.Timestamp = timestamp
 		case "cv":
+			value = strings.ToLower(value)
 			if !isChainValidationResult(value) {
 				return nil, fmt.Errorf("invalid chain validation result")
 			}
 			result.ChainValidation = ChainValidationResult(value)
 		}
+	}
+	if result.invalid {
+		result.ChainValidation = ChainValidationResultFail
 	}
 	result.hashAlgo = hashAlgo(result.Algorithm)
 
@@ -444,7 +450,13 @@ func parseARCHeadersThrough(headers []string, maxInstance int) (*signatures, err
 		case "arc-authentication-results":
 			ret, err := ParseARCAuthenticationResults(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
+				// RFC 8617 §3.4: syntax of the authres-payload does not affect
+				// chain validity. Keep the signed header and its instance even
+				// when the assessment cannot be interpreted as RFC 8601.
+				ret, err = parseAARForChain(h)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
+				}
 			}
 			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
 				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
@@ -471,6 +483,19 @@ func parseARCHeadersThrough(headers []string, maxInstance int) (*signatures, err
 	}
 
 	return &sigs, nil
+}
+
+func parseAARForChain(raw string) (*ARCAuthenticationResults, error) {
+	name, value, ok := strings.Cut(raw, ":")
+	if !ok || !strings.EqualFold(name, "ARC-Authentication-Results") {
+		return nil, fmt.Errorf("invalid header field")
+	}
+	// The payload is authenticated as raw bytes by the ARC-Seal.
+	instance, _, err := authres.ParseARCInstance(value)
+	if err != nil {
+		return nil, err
+	}
+	return &ARCAuthenticationResults{InstanceNumber: instance, raw: raw}, nil
 }
 
 // Ignore a later header only when its instance is unambiguous and in range.

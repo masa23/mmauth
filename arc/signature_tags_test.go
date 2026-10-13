@@ -23,6 +23,15 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 			if e := tc.parse(tc.raw + ";\r\n"); e != nil {
 				t.Fatal(e)
 			}
+			if e := tc.parse(strings.Replace(tc.raw, ": ", ": ; ", 1)); e == nil {
+				t.Error("leading empty tag accepted")
+			}
+			fieldName, _, _ := strings.Cut(tc.raw, ":")
+			for _, badName := range []string{" " + fieldName, fieldName + " "} {
+				if e := tc.parse(strings.Replace(tc.raw, fieldName+":", badName+":", 1)); e == nil {
+					t.Fatalf("invalid field name %q accepted", badName)
+				}
+			}
 			for _, tag := range tc.required {
 				t.Run("missing/"+tag, func(t *testing.T) {
 					fields := strings.Split(strings.SplitN(tc.raw, ": ", 2)[1], "; ")
@@ -58,18 +67,39 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 					})
 				}
 			}
-			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value"} {
+			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=" + string([]byte{0xff})} {
 				if e := tc.parse(tc.raw + suffix); e == nil {
 					t.Errorf("invalid suffix %q accepted", suffix)
 				}
 			}
-			if e := tc.parse(tc.raw + "; x-custom=one"); e != nil {
+			if e := tc.parse(strings.Replace(tc.raw, "a=rsa-sha256", "A=rsa-sha256", 1)); e == nil {
+				t.Error("case-distinct unknown A tag replaced required a tag")
+			}
+			if e := tc.parse(tc.raw + "; X=one; x=two"); e != nil {
+				t.Fatalf("case-distinct unknown tags rejected: %v", e)
+			}
+			if e := tc.parse(tc.raw + "; x_custom=one"); e != nil {
 				t.Fatalf("unknown tag rejected: %v", e)
 			}
 			if e := tc.parse(strings.Replace(tc.raw, "b=AAAA", "b=", 1)); e != nil {
 				t.Fatalf("signing placeholder rejected: %v", e)
 			}
 		})
+	}
+}
+
+func TestARCSignatureRejectsTrailingControlCharacter(t *testing.T) {
+	for _, raw := range []string{
+		"ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h=from; s=s; b=AAAA\v\r\n",
+		"ARC-Seal: i=1; a=rsa-sha256; cv=none; d=example.com; s=s; b=AAAA\v\r\n",
+	} {
+		if strings.HasPrefix(raw, "ARC-Seal:") {
+			if _, err := ParseARCSeal(raw); err == nil {
+				t.Errorf("accepted malformed seal %q", raw)
+			}
+		} else if _, err := ParseARCMessageSignature(raw); err == nil {
+			t.Errorf("accepted malformed message signature %q", raw)
+		}
 	}
 }
 

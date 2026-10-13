@@ -1,0 +1,33 @@
+package dkimheader
+
+import "testing"
+
+const rfc6376BaseTags = "v=1; a=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj"
+
+func TestRFC6376TagListABNFAndFWS(t *testing.T) {
+	for _, tc := range []struct {
+		name, input string
+		valid       bool
+	}{
+		{"ordinary", rfc6376BaseTags, true},
+		{"folded separators", "v=1;\r\n a=rsa-sha256; d=example.com; s=test; h=from; bh=YW\r\n Jj; b=YWJj", true},
+		{"unknown uppercase tag distinct", rfc6376BaseTags + "; W=one; w=two", true},
+		{"empty repeated separator", rfc6376BaseTags + ";; z=one", false},
+		{"leading separator", "; " + rfc6376BaseTags, false},
+		{"invalid name hyphen", rfc6376BaseTags + "; x-y=one", false},
+		{"invalid name starting digit", rfc6376BaseTags + "; 2x=one", false},
+		{"bare LF", "v=1;\na=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
+		{"bare CR", "v=1;\ra=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
+		{"CRLF without WSP", "v=1;\r\na=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
+		{"control", rfc6376BaseTags + "; z=a\x01b", false},
+		{"invalid UTF-8", rfc6376BaseTags + "; z=" + string([]byte{0xff}), false},
+		{"uppercase required tag ignored", "V=1; a=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseSignatureParams(tc.input)
+			if (err == nil) != tc.valid {
+				t.Fatalf("input=%q error=%v; valid=%t", tc.input, err, tc.valid)
+			}
+		})
+	}
+}

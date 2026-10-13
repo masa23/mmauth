@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
+	"strings"
 	"sync"
 
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/bodyhash"
 	"github.com/masa23/mmauth/internal/canonical"
 	"github.com/masa23/mmauth/spf"
@@ -58,19 +61,19 @@ func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
 
 func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAndAlgorithm {
 	var ret []BodyCanonicalizationAndAlgorithm
-	for _, dkim := range *a.DKIMSignatures {
-		if dkim == nil || dkim.ParseError() != nil {
+	for _, sig := range *a.DKIMSignatures {
+		if sig == nil || sig.ParseError() != nil || sig.Algorithm == dkim.SignatureAlgorithmRSA_SHA1 {
 			continue
 		}
-		_, body, err := parseHeaderCanonicalization(dkim.Canonicalization)
+		_, body, err := parseHeaderCanonicalization(sig.Canonicalization)
 		if err != nil {
 			continue
 		}
 		bca := BodyCanonicalizationAndAlgorithm{
 			Body:      body,
-			Algorithm: hashAlgo(SignatureAlgorithm(dkim.Algorithm)),
-			Limit:     dkim.Limit,
-			LimitSet:  dkim.LimitSet,
+			Algorithm: hashAlgo(SignatureAlgorithm(sig.Algorithm)),
+			Limit:     sig.Limit,
+			LimitSet:  sig.LimitSet,
 		}
 		if !isCcanonicalizationBodyAndAlgorithm(bca, ret) {
 			ret = append(ret, bca)
@@ -359,11 +362,24 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 
 	var results []string
 	if spfResult != nil {
+		fragment := fmt.Sprintf("spf=%s", spfResult.Status)
 		if mailFrom == "" || mailFrom == "<>" {
-			results = append(results, fmt.Sprintf("spf=%s smtp.helo=%s", spfResult.Status, helo))
+			if authres.ValidDomainValue(helo) {
+				fragment += " smtp.helo=" + helo
+			}
 		} else {
-			results = append(results, fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", spfResult.Status, mailFrom, helo))
+			sender := ParseAddress(mailFrom)
+			if addr, err := mail.ParseAddress(sender); err == nil && addr.Name == "" {
+				// SPF authenticates the MAIL FROM domain, not its local part.
+				if at := strings.LastIndexByte(addr.Address, '@'); at >= 0 {
+					domain := addr.Address[at+1:]
+					if authres.ValidDomainValue(domain) {
+						fragment += " smtp.mailfrom=" + domain
+					}
+				}
+			}
 		}
+		results = append(results, fragment)
 		m.AuthenticationHeaders.SPFResult = spfResult
 	}
 

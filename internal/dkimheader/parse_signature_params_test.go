@@ -114,16 +114,16 @@ func TestParseSignatureParams(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "Very long tag name should be rejected",
+			name:    "Very long tag name follows ABNF without arbitrary parser limit",
 			input:   "a=rsa-sha256; b=signature; bh=bodyhash; d=example.org; h=from:to; s=selector; v=1; " + strings.Repeat("x", 1000) + "=value",
-			wantErr: true,
-			errMsg:  "malformed header params",
+			want:    map[string]string{"a": "rsa-sha256", "b": "signature", "bh": "bodyhash", "d": "example.org", "h": "from:to", "s": "selector", "v": "1"},
+			wantErr: false,
 		},
 		{
-			name:    "Very long tag value should be rejected",
+			name:    "Very long unknown tag value follows ABNF without arbitrary parser limit",
 			input:   "a=rsa-sha256; b=signature; bh=bodyhash; d=example.org; h=from:to; s=selector; v=1; tag=" + strings.Repeat("x", 10000),
-			wantErr: true,
-			errMsg:  "malformed header params",
+			want:    map[string]string{"a": "rsa-sha256", "b": "signature", "bh": "bodyhash", "d": "example.org", "h": "from:to", "s": "selector", "v": "1"},
+			wantErr: false,
 		},
 	}
 

@@ -63,10 +63,11 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 	result.raw = s
 
 	// ヘッダと値に分割
-	k, v := header.ParseHeaderField(s)
-	if !strings.EqualFold(k, "arc-message-signature") {
+	name, v, ok := strings.Cut(s, ":")
+	if !ok || !strings.EqualFold(name, "ARC-Message-Signature") {
 		return nil, fmt.Errorf("invalid header field")
 	}
+	v = strings.TrimSuffix(v, "\r\n")
 	tags, err := parseSignatureTags(v, "ARC-Message-Signature", []string{"i", "a", "b", "bh", "d", "h", "s"})
 	if err != nil {
 		return nil, err
