@@ -2,12 +2,14 @@ package arc
 
 import (
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
 
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/internal/header"
 )
 
 // 正規化
@@ -156,17 +158,27 @@ func base64Decode(s string) ([]byte, error) {
 }
 
 func validateSigningCryptoPolicy(algorithm SignatureAlgorithm, key crypto.Signer) error {
-	if key == nil {
+	if header.IsNilSigner(key) {
 		return fmt.Errorf("private key is nil")
 	}
 	if algorithm == SignatureAlgorithmRSA_SHA1 {
 		return fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
 	}
-	if algorithm != SignatureAlgorithmRSA_SHA256 && algorithm != SignatureAlgorithmED25519_SHA256 {
+	switch algorithm {
+	case SignatureAlgorithmRSA_SHA256:
+		publicKey, ok := key.Public().(*rsa.PublicKey)
+		if !ok || publicKey == nil || publicKey.N == nil {
+			return fmt.Errorf("ARC: rsa-sha256 requires an RSA signing key")
+		}
+		if publicKey.N.BitLen() < 1024 {
+			return fmt.Errorf("ARC: RSA signing key is shorter than 1024 bits")
+		}
+	case SignatureAlgorithmED25519_SHA256:
+		if _, ok := key.Public().(ed25519.PublicKey); !ok {
+			return fmt.Errorf("ARC: ed25519-sha256 requires an Ed25519 signing key")
+		}
+	default:
 		return fmt.Errorf("ARC: invalid signing algorithm")
-	}
-	if publicKey, ok := key.Public().(*rsa.PublicKey); ok && publicKey.N.BitLen() < 1024 {
-		return fmt.Errorf("ARC: RSA signing key is shorter than 1024 bits")
 	}
 	return nil
 }

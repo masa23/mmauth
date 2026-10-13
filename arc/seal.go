@@ -138,7 +138,7 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 
 // ARC-Seal の署名
 func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
-	if key == nil {
+	if header.IsNilSigner(key) {
 		return fmt.Errorf("private key is nil")
 	}
 	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {

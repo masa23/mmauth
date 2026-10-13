@@ -271,3 +271,32 @@ func TestRFC7489MultivaluedFromSelectsStrictestFailedPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestRFC7489EquivalentIDNAuthorsEvaluatedOnce(t *testing.T) {
+	oldDMARC, oldSPF := dmarc.DefaultResolver, spf.DefaultTXTResolver
+	t.Cleanup(func() { dmarc.DefaultResolver, spf.DefaultTXTResolver = oldDMARC, oldSPF })
+	lookups := 0
+	dmarc.DefaultResolver = func(name string) ([]string, error) {
+		if name != "_dmarc.xn--bcher-kva.example" {
+			t.Fatalf("unexpected DMARC lookup %q", name)
+		}
+		lookups++
+		return []string{"v=DMARC1; p=reject; pct=100"}, nil
+	}
+	spf.DefaultTXTResolver = func(string) ([]string, error) { return []string{"v=spf1 -all"}, nil }
+	m := NewMMAuth()
+	const message = "From: Alice <alice@bücher.example>, Bob <bob@xn--bcher-kva.example>\r\nDate: Tue, 05 Feb 2019 00:00:00 +0000\r\n\r\nbody\r\n"
+	if _, err := m.Write([]byte(message)); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.EvaluateDMARC(net.ParseIP("192.0.2.1"), "helo.example.net", "sender@example.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 1 || got.Status != dmarc.EvaluationFail || got.Disposition != dmarc.PolicyReject {
+		t.Fatalf("equivalent IDNs evaluated %d times: %+v", lookups, got)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -94,7 +95,7 @@ func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalizatio
 // header field is hashed without its terminating CRLF.
 func SignerWithOmitLastCRLF(headers []string, key crypto.Signer, canon canonical.Canonicalization, hashAlgo crypto.Hash, omitLastCRLF bool) (string, error) {
 	// keyがnilの場合はエラーを返す
-	if key == nil {
+	if IsNilSigner(key) {
 		return "", errors.New("private key is nil")
 	}
 
@@ -149,6 +150,19 @@ func SignerWithOmitLastCRLF(headers []string, key crypto.Signer, canon canonical
 	// 署名をbase64エンコード
 	b64 := base64.StdEncoding.EncodeToString(signature)
 	return b64, nil
+}
+
+// IsNilSigner also detects a typed nil stored inside the crypto.Signer interface.
+func IsNilSigner(key crypto.Signer) bool {
+	if key == nil {
+		return true
+	}
+	value := reflect.ValueOf(key)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	}
+	return false
 }
 
 // relaxed/simpleなどの文字列をパースしてcanonicalizationを返す

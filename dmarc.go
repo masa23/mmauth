@@ -32,11 +32,16 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 		record *dmarc.Record
 	}
 	var policies []authorPolicy
+	seenCanonical := make(map[string]bool, len(authors))
 	for _, author := range authors {
 		canonical, normalizeErr := dmarc.NormalizeAuthorDomain(author)
 		if normalizeErr != nil {
 			return result, fmt.Errorf("invalid RFC5322.From domain: %w", normalizeErr)
 		}
+		if seenCanonical[canonical] {
+			continue
+		}
+		seenCanonical[canonical] = true
 		record, lookupErr := dmarc.LookupRecordWithSubdomainFallback(canonical)
 		if errors.Is(lookupErr, dmarc.ErrNoRecordFound) {
 			continue
@@ -48,7 +53,7 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 			}
 			return dmarc.Evaluation{Status: status, Disposition: dmarc.PolicyNone}, lookupErr
 		}
-		policies = append(policies, authorPolicy{author, record})
+		policies = append(policies, authorPolicy{canonical, record})
 	}
 	if len(policies) == 0 {
 		return dmarc.Evaluation{Status: dmarc.EvaluationNone, Disposition: dmarc.PolicyNone}, nil
@@ -173,8 +178,8 @@ func authorDomainsFromHeaders(fields headers) ([]string, error) {
 			seen[strings.ToLower(domain)] = true
 		}
 	}
-	// LookupRecordWithSubdomainFallback normalizes IDNs to A-labels; return
-	// the original domain here for alignment's equivalent normalization.
+	// Preserve the source spelling; EvaluateDMARC normalizes and deduplicates
+	// domains before policy lookup and sampling.
 	return domains, nil
 }
 

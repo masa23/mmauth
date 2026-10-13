@@ -3,6 +3,7 @@ package dkim
 import (
 	"context"
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
@@ -124,10 +125,36 @@ func TestRFC8301RSAKeySizeBoundaries(t *testing.T) {
 }
 
 func TestDKIMSignRejectsNilKey(t *testing.T) {
-	for _, algorithm := range []SignatureAlgorithm{"", SignatureAlgorithmRSA_SHA256} {
-		signer := &Signature{Version: 1, Algorithm: algorithm, Canonicalization: "simple/simple"}
-		if err := signer.Sign([]string{"From: a@example.com\r\n"}, nil); err == nil {
-			t.Fatalf("signed with nil key and algorithm %q", algorithm)
+	var typedNil *rsa.PrivateKey
+	for _, key := range []crypto.Signer{nil, typedNil} {
+		for _, algorithm := range []SignatureAlgorithm{"", SignatureAlgorithmRSA_SHA256} {
+			signer := &Signature{Version: 1, Algorithm: algorithm, Canonicalization: "simple/simple"}
+			if err := signer.Sign([]string{"From: a@example.com\r\n"}, key); err == nil {
+				t.Fatalf("signed with nil key %T and algorithm %q", key, algorithm)
+			}
+		}
+	}
+}
+
+func TestDKIMSignRejectsAlgorithmKeyMismatch(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, edKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		algorithm SignatureAlgorithm
+		key       crypto.Signer
+	}{
+		{SignatureAlgorithmRSA_SHA256, edKey},
+		{SignatureAlgorithmED25519_SHA256, rsaKey},
+	} {
+		signer := &Signature{Version: 1, Algorithm: tc.algorithm, Canonicalization: "simple/simple"}
+		if err := signer.Sign([]string{"From: a@example.com\r\n"}, tc.key); err == nil {
+			t.Errorf("signed with %s and %T", tc.algorithm, tc.key)
 		}
 	}
 }

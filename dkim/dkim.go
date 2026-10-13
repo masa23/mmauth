@@ -402,7 +402,7 @@ func ParseSignature(s string) (*Signature, error) {
 
 // DKIMSignatureに署名を行う
 func (d *Signature) Sign(headers []string, key crypto.Signer) error {
-	if key == nil {
+	if header.IsNilSigner(key) {
 		return fmt.Errorf("private key is nil")
 	}
 	// DKIM Version Check
@@ -452,8 +452,21 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 	if d.Algorithm == SignatureAlgorithmRSA_SHA1 {
 		return fmt.Errorf("dkim: rsa-sha1 is a historic algorithm")
 	}
-	if publicKey, ok := key.Public().(*rsa.PublicKey); ok && publicKey.N.BitLen() < 1024 {
-		return fmt.Errorf("dkim: RSA signing key is shorter than 1024 bits")
+	switch d.Algorithm {
+	case SignatureAlgorithmRSA_SHA256:
+		publicKey, ok := key.Public().(*rsa.PublicKey)
+		if !ok || publicKey == nil || publicKey.N == nil {
+			return fmt.Errorf("dkim: rsa-sha256 requires an RSA signing key")
+		}
+		if publicKey.N.BitLen() < 1024 {
+			return fmt.Errorf("dkim: RSA signing key is shorter than 1024 bits")
+		}
+	case SignatureAlgorithmED25519_SHA256:
+		if _, ok := key.Public().(ed25519.PublicKey); !ok {
+			return fmt.Errorf("dkim: ed25519-sha256 requires an Ed25519 signing key")
+		}
+	default:
+		return fmt.Errorf("dkim: invalid signing algorithm")
 	}
 
 	// DKIM-Signatureヘッダのb=タグの値を空文字列として扱う
