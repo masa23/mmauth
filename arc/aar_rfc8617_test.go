@@ -91,7 +91,7 @@ func TestRFC8617AARChainRejectsInvalidEnvelope(t *testing.T) {
 	}
 }
 
-func TestRFC8617ARCInstanceIgnoresUnicodeLookalikeField(t *testing.T) {
+func TestRFC8617ARCInstanceRejectsUnicodeFieldAndWhitespace(t *testing.T) {
 	raw := "ARC-ſeal: i=2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n"
 	if _, ok := arcHeaderInstance(raw); ok {
 		t.Fatal("Unicode lookalike recognized as ARC-Seal")
@@ -105,9 +105,19 @@ func TestRFC8617ARCInstanceIgnoresUnicodeLookalikeField(t *testing.T) {
 		"ARC-Seal: i=+2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
 		"ARC-Seal: i=002; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
 		"ARC-Seal: i=1 2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+		"ARC-Seal: i=\u00a01; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+		"ARC-Seal: i\u2003=1; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
 	} {
 		if _, ok := arcHeaderInstance(raw); ok || isLaterARCHeader(raw, 1) {
 			t.Fatalf("unregistered instance tag recognized: %q", raw)
+		}
+	}
+	for _, raw := range []string{
+		"ARC-Authentication-Results: i=\u00a01; mx.example.com; none\r\n",
+		"ARC-Authentication-Results: i=1\u2003; mx.example.com; none\r\n",
+	} {
+		if _, err := ParseARCAuthenticationResults(raw); err == nil {
+			t.Fatalf("Unicode whitespace in ARC instance accepted: %q", raw)
 		}
 	}
 }

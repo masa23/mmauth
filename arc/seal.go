@@ -536,14 +536,14 @@ func isLaterARCHeader(raw string, maxInstance int) bool {
 	instance, found := 0, false
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
-		if !ok || strings.TrimSpace(key) != "i" {
+		if !ok || strings.Trim(key, " \t\r\n") != "i" {
 			continue
 		}
 		if found {
 			return false
 		}
 		found = true
-		n, err := authres.ParseARCPosition(strings.TrimSpace(value))
+		n, err := authres.ParseARCPosition(strings.Trim(value, " \t\r\n"))
 		if err != nil {
 			return false
 		}

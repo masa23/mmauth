@@ -37,6 +37,11 @@ func ParseARCInstance(value string) (int, string, error) {
 			escaped = true
 			continue
 		}
+		// The instance grammar is ASCII outside comments. In particular,
+		// Unicode whitespace must not be normalized into CFWS.
+		if depth == 0 && value[i] >= 0x80 {
+			return 0, "", fmt.Errorf("invalid AAR instance tag")
+		}
 		if value[i] == '"' && depth == 0 {
 			quoted = !quoted
 			continue

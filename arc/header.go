@@ -167,8 +167,8 @@ func arcHeaderInstance(raw string) (int, bool) {
 	}
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
-		if ok && strings.TrimSpace(key) == "i" {
-			n, err := authres.ParseARCPosition(strings.TrimSpace(value))
+		if ok && strings.Trim(key, " \t\r\n") == "i" {
+			n, err := authres.ParseARCPosition(strings.Trim(value, " \t\r\n"))
 			return n, err == nil
 		}
 	}
