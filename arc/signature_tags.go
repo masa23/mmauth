@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/masa23/mmauth/internal/header"
+	"golang.org/x/net/idna"
 )
 
 type signatureTag struct {
@@ -22,7 +22,7 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 	seen := make(map[string]string)
 	fields := strings.Split(value, ";")
 	for i, field := range fields {
-		field = strings.TrimSpace(field)
+		field = strings.Trim(field, " \t\r\n")
 		if field == "" {
 			if i == len(fields)-1 && i > 0 {
 				continue // RFC 6376 permits one terminal semicolon.
@@ -30,14 +30,34 @@ func parseSignatureTags(value, fieldName string, required []string) ([]signature
 			return nil, fmt.Errorf("empty %s tag", fieldName)
 		}
 		key, value, ok := strings.Cut(field, "=")
-		key = strings.TrimSpace(key)
+		key = strings.Trim(key, " \t\r\n")
 		if !ok || !validSignatureTagName(key) {
 			return nil, fmt.Errorf("malformed %s tag", fieldName)
+		}
+		if i == 0 && key != "i" {
+			return nil, fmt.Errorf("%s must begin with i=", fieldName)
 		}
 		if _, exists := seen[key]; exists {
 			return nil, fmt.Errorf("duplicate tag '%s' in %s", key, fieldName)
 		}
-		value = header.StripWhiteSpace(value)
+		value = strings.Trim(value, " \t\r\n")
+		switch key {
+		case "b", "bh", "h":
+			value = strings.Map(func(r rune) rune {
+				if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
+					return -1
+				}
+				return r
+			}, value)
+		case "d":
+			if _, err := arcDNSName(value, 2); err != nil {
+				return nil, fmt.Errorf("invalid %s d= tag: %w", fieldName, err)
+			}
+		case "s":
+			if _, err := arcDNSName(value, 1); err != nil {
+				return nil, fmt.Errorf("invalid %s s= tag: %w", fieldName, err)
+			}
+		}
 		seen[key] = value
 		tags = append(tags, signatureTag{key, value})
 	}
@@ -70,6 +90,35 @@ func isASCIILetter(ch byte) bool {
 	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
 }
 
+// arcDNSName validates the DKIM domain/selector grammar and converts any
+// RFC 8617 U-labels to the A-labels needed for DNS lookup. The parsed header
+// retains its original spelling for signature verification.
+func arcDNSName(value string, minLabels int) (string, error) {
+	ascii, err := idna.Lookup.ToASCII(value)
+	if err != nil || len(ascii) == 0 || len(ascii) > 253 {
+		return "", fmt.Errorf("invalid DNS name")
+	}
+	labels := strings.Split(ascii, ".")
+	if len(labels) < minLabels {
+		return "", fmt.Errorf("invalid DNS name")
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return "", fmt.Errorf("invalid DNS label")
+		}
+		for i := 0; i < len(label); i++ {
+			ch := label[i]
+			if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+				continue
+			}
+			if ch != '-' || i == 0 || i == len(label)-1 {
+				return "", fmt.Errorf("invalid DNS label")
+			}
+		}
+	}
+	return ascii, nil
+}
+
 func validateSignatureTagListCharacters(value string) error {
 	if !utf8.ValidString(value) {
 		return fmt.Errorf("invalid UTF-8")
@@ -83,7 +132,7 @@ func validateSignatureTagListCharacters(value string) error {
 			i++
 			continue
 		}
-		if ch == '\n' || (ch < ' ' && ch != '\t') || ch > '~' {
+		if ch == '\n' || (ch < ' ' && ch != '\t') || ch == 127 {
 			return fmt.Errorf("invalid tag-list character")
 		}
 	}

@@ -249,7 +249,12 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
-		domKey, err := domainkey.LookupARCDomainKey(as.Selector, as.Domain)
+		selector, selectorErr := arcDNSName(as.Selector, 1)
+		domain, domainErr := arcDNSName(as.Domain, 2)
+		if selectorErr != nil || domainErr != nil {
+			return &VerifyResult{status: VerifyStatusPermErr, err: fmt.Errorf("invalid ARC signing identifier"), msg: "invalid signing identifier"}
+		}
+		domKey, err := domainkey.LookupARCDomainKey(selector, domain)
 		if errors.Is(err, domainkey.ErrInvalidVersion) {
 			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
 		} else if errors.Is(err, domainkey.ErrInvalidKeyType) {

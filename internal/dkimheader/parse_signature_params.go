@@ -19,6 +19,8 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 
 	// Track seen tags to detect duplicates
 	seenTags := make(map[string]bool)
+	// RFC 6376 §3.5 requires v= but does not constrain its position. The
+	// first-tag rule in §3.6.1 applies to DKIM key records only.
 
 	for index, pair := range pairs {
 		trimmedPair := strings.TrimSpace(pair)

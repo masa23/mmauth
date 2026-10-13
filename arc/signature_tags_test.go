@@ -23,6 +23,9 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 			if e := tc.parse(tc.raw + ";\r\n"); e != nil {
 				t.Fatal(e)
 			}
+			if e := tc.parse(strings.Replace(tc.raw, "i=1; a=rsa-sha256", "a=rsa-sha256; i=1", 1)); e == nil {
+				t.Error("instance tag outside first position accepted")
+			}
 			if e := tc.parse(strings.Replace(tc.raw, ": ", ": ; ", 1)); e == nil {
 				t.Error("leading empty tag accepted")
 			}
@@ -67,7 +70,7 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 					})
 				}
 			}
-			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=é", "; x=" + string([]byte{0xff})} {
+			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=" + string([]byte{0xff})} {
 				if e := tc.parse(tc.raw + suffix); e == nil {
 					t.Errorf("invalid suffix %q accepted", suffix)
 				}
@@ -80,6 +83,14 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 			}
 			if e := tc.parse(tc.raw + "; x_custom=one"); e != nil {
 				t.Fatalf("unknown tag rejected: %v", e)
+			}
+			if e := tc.parse(tc.raw + "; x=é"); e != nil {
+				t.Fatalf("RFC 8617 UTF-8 tag value rejected: %v", e)
+			}
+			for _, pair := range [][2]string{{"d=example.com", "d=example .com"}, {"s=s", "s=s s"}} {
+				if e := tc.parse(strings.Replace(tc.raw, pair[0], pair[1], 1)); e == nil {
+					t.Errorf("invalid ARC identifier %q accepted", pair[1])
+				}
 			}
 			if e := tc.parse(strings.Replace(tc.raw, "b=AAAA", "b=", 1)); e != nil {
 				t.Fatalf("signing placeholder rejected: %v", e)
@@ -100,6 +111,40 @@ func TestARCSignatureRejectsTrailingControlCharacter(t *testing.T) {
 		} else if _, err := ParseARCMessageSignature(raw); err == nil {
 			t.Errorf("accepted malformed message signature %q", raw)
 		}
+	}
+}
+
+func TestRFC8617ARCULabelSigningIdentifiersUseALabelDNS(t *testing.T) {
+	key, domainKey := regressionARCKey(t)
+	oldResolver := domainkey.DefaultResolver
+	t.Cleanup(func() { domainkey.DefaultResolver = oldResolver })
+	lookups := 0
+	domainkey.DefaultResolver = func(name string) ([]string, error) {
+		if name != "xn--bcher-kva._domainkey.xn--bcher-kva.example" {
+			t.Fatalf("unexpected ARC key lookup %q", name)
+		}
+		lookups++
+		return []string{"v=DKIM1; k=ed25519; p=" + domainKey.PublicKey}, nil
+	}
+	const bodyHash = "Ck5SoRNWUpSR4X0COv7R5ub2pUTtl6xz4dTFz++ji4M="
+	headers := []string{"From: a@example.com\r\n"}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "bücher.example", Selector: "bücher", Canonicalization: "relaxed/relaxed", BodyHash: bodyHash}
+	if err := ams.Sign(headers, key); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Authentication-Results: i=1; example.com; dkim=pass\r\n", "ARC-Message-Signature: "+ams.String()+"\r\n")
+	seal := &ARCSeal{InstanceNumber: 1, Domain: "bücher.example", Selector: "bücher", ChainValidation: ChainValidationResultNone}
+	if err := seal.Sign(headers, key); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Seal: "+seal.String()+"\r\n")
+	chain, err := ParseARCHeaders(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain.GetInstance(1).VerifyWithKeys(headers, bodyHash, nil, nil)
+	if lookups != 2 || chain.GetVerifyResult() != VerifyStatusPass {
+		t.Fatalf("U-label ARC verification: lookups=%d status=%s", lookups, chain.GetVerifyResult())
 	}
 }
 
