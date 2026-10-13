@@ -18,7 +18,8 @@ func TestRFC6376SignatureIdentityAndBase64Syntax(t *testing.T) {
 		{"quoted escape", "b=YWJj", `i="a=5C"b"@example.com; b=YWJj`, true},
 		{"unquoted encoded space", "b=YWJj", "i=a=20b@example.com; b=YWJj", false},
 		{"double dot local-part", "b=YWJj", "i=a..b@example.com; b=YWJj", false},
-		{"bad quoted printable hex", "b=YWJj", "i=a=2eb@example.com; b=YWJj", false},
+		// RFC 6376 §2.11 permits uppercase hexadecimal digits only.
+		{"lowercase quoted printable hex", "b=YWJj", "i=a=2eb@example.com; b=YWJj", false},
 		{"trailing QP escape", "b=YWJj", "i=a=2@example.com; b=YWJj", false},
 		{"folded signature and body hash", "bh=YWJj; b=YWJj", "bh=YW\r\n Jj; b=YW\r\n Jj", true},
 		{"bad signature alphabet", "b=YWJj", "b=YW_Jj", false},

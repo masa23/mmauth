@@ -156,6 +156,9 @@ func base64Decode(s string) ([]byte, error) {
 }
 
 func validateSigningCryptoPolicy(algorithm SignatureAlgorithm, key crypto.Signer) error {
+	if key == nil {
+		return fmt.Errorf("private key is nil")
+	}
 	if algorithm == SignatureAlgorithmRSA_SHA1 {
 		return fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
 	}

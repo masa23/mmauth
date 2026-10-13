@@ -133,6 +133,9 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 
 // ARC-Message-Signature の署名
 func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error {
+	if key == nil {
+		return fmt.Errorf("private key is nil")
+	}
 	// RFC 8617で禁止されるヘッダを定義
 	forbiddenHeaders := map[string]bool{
 		"authentication-results":     true,

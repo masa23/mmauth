@@ -268,3 +268,16 @@ func TestARCRFC8301RejectsHistoricAlgorithmAndShortRSAKeys(t *testing.T) {
 		t.Fatalf("rsa-sha1 AS verification=%s", got.Status())
 	}
 }
+
+func TestARCSignRejectsNilKey(t *testing.T) {
+	for _, algorithm := range []SignatureAlgorithm{"", SignatureAlgorithmRSA_SHA256} {
+		ams := &ARCMessageSignature{InstanceNumber: 1, Algorithm: algorithm}
+		if err := ams.Sign([]string{"From: a@example.com\r\n"}, nil); err == nil {
+			t.Fatalf("AMS signed with nil key and algorithm %q", algorithm)
+		}
+		seal := &ARCSeal{InstanceNumber: 1, Algorithm: algorithm}
+		if err := seal.Sign(nil, nil); err == nil {
+			t.Fatalf("AS signed with nil key and algorithm %q", algorithm)
+		}
+	}
+}

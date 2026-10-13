@@ -77,9 +77,15 @@ func TestRFC8617AARChainRejectsInvalidEnvelope(t *testing.T) {
 		" ARC-Authentication-Results: i=1; mx.example.com; none\r\n",
 		"ARC-Authentication-Results\v: i=1; mx.example.com; none\r\n",
 		"ARC-Authentication-Results: i=1\v; mx.example.com; none\r\n",
+		"ARC-Authentication-Results: i=1; mx.example.com; broken\x00payload\r\n",
+		"ARC-Authentication-Results: i=1; mx.example.com; broken\r\nX-Injected: yes\r\n",
+		"ARC-Authentication-Results: i=1; mx.example.com; broken\n",
 	} {
 		if _, err := parseAARForChain(raw); err == nil {
 			t.Errorf("accepted malformed AAR envelope %q", raw)
 		}
+	}
+	if _, err := parseAARForChain("ARC-Authentication-Results: i=1; mx.example.com; broken\r\n continuation\r\n"); err != nil {
+		t.Fatalf("valid folded malformed payload rejected: %v", err)
 	}
 }

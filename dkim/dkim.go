@@ -402,6 +402,9 @@ func ParseSignature(s string) (*Signature, error) {
 
 // DKIMSignatureに署名を行う
 func (d *Signature) Sign(headers []string, key crypto.Signer) error {
+	if key == nil {
+		return fmt.Errorf("private key is nil")
+	}
 	// DKIM Version Check
 	if d.Version != 1 {
 		return errors.New("dkim: invalid version")

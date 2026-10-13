@@ -64,12 +64,18 @@ func EvaluatePolicy(record *Record, authorDomain string, dkim []DKIMIdentity, sp
 		result.Status = EvaluationPass
 		return result, nil
 	}
-	if spf.TemporaryError {
+	// An unrelated temporary authentication failure cannot become an aligned
+	// identifier after retry, so it must not prevent application of policy.
+	author, authorOrg, err := alignmentDomain(authorDomain)
+	if err != nil {
+		return Evaluation{}, fmt.Errorf("invalid RFC5322.From domain: %w", err)
+	}
+	if spf.TemporaryError && domainsAligned(author, authorOrg, spf.Domain, record.AlignmentSPF) {
 		result.Status = EvaluationTempError
 		return result, nil
 	}
 	for _, signature := range dkim {
-		if signature.TemporaryError {
+		if signature.TemporaryError && domainsAligned(author, authorOrg, signature.Domain, record.AlignmentDKIM) {
 			result.Status = EvaluationTempError
 			return result, nil
 		}

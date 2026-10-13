@@ -138,6 +138,9 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 
 // ARC-Seal の署名
 func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
+	if key == nil {
+		return fmt.Errorf("private key is nil")
+	}
 	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {
 		return fmt.Errorf("invalid ARC instance")
 	}
@@ -500,6 +503,10 @@ func parseAARForChain(raw string) (*ARCAuthenticationResults, error) {
 	name, value, ok := strings.Cut(raw, ":")
 	if !ok || !strings.EqualFold(name, "ARC-Authentication-Results") {
 		return nil, fmt.Errorf("invalid header field")
+	}
+	value = strings.TrimSuffix(value, "\r\n")
+	if err := authres.ValidateFieldValue(value); err != nil {
+		return nil, err
 	}
 	// The payload is authenticated as raw bytes by the ARC-Seal.
 	instance, _, err := authres.ParseARCInstance(value)

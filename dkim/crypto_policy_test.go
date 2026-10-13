@@ -122,3 +122,12 @@ func TestRFC8301RSAKeySizeBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestDKIMSignRejectsNilKey(t *testing.T) {
+	for _, algorithm := range []SignatureAlgorithm{"", SignatureAlgorithmRSA_SHA256} {
+		signer := &Signature{Version: 1, Algorithm: algorithm, Canonicalization: "simple/simple"}
+		if err := signer.Sign([]string{"From: a@example.com\r\n"}, nil); err == nil {
+			t.Fatalf("signed with nil key and algorithm %q", algorithm)
+		}
+	}
+}
