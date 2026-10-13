@@ -133,6 +133,34 @@ func TestARCSignatureRejectsTrailingControlCharacter(t *testing.T) {
 	}
 }
 
+func TestRFC8617AMSCanonicalizationTagMustHaveValue(t *testing.T) {
+	const base = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h=from; s=s; b=AAAA"
+	for _, value := range []string{"c=", "c= \t"} {
+		if _, err := ParseARCMessageSignature(base + "; " + value); err == nil {
+			t.Errorf("empty explicit %q accepted", value)
+		}
+	}
+	if _, err := ParseARCMessageSignature(base); err != nil {
+		t.Fatalf("omitted c= must use the default: %v", err)
+	}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", BodyHash: "AAAA"}
+	if err := ams.Sign([]string{"From: a@example.com\r\n"}, testKeys.RSAPrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ams.String(), "; c=") {
+		t.Fatalf("default canonicalization was serialized as explicit c=: %s", ams.String())
+	}
+	parsed, err := ParseARCMessageSignature("ARC-Message-Signature: " + ams.String() + "\r\n")
+	if err != nil || parsed.GetCanonicalizationAndAlgorithm().Header != CanonicalizationSimple || parsed.GetCanonicalizationAndAlgorithm().Body != CanonicalizationSimple {
+		t.Fatalf("signed AMS default canonicalization: parsed=%+v error=%v", parsed, err)
+	}
+	key := &domainkey.DomainKey{PublicKey: testKeys.RSAPublicKeyBase64, KeyType: domainkey.KeyTypeRSA}
+	allHeaders := []string{"From: a@example.com\r\n", "ARC-Message-Signature: " + ams.String() + "\r\n"}
+	if result := parsed.Verify(allHeaders, ams.BodyHash, key); result.Status() != VerifyStatusPass {
+		t.Fatalf("signed AMS did not verify with default canonicalization: %s, %v", result.Status(), result.Error())
+	}
+}
+
 func TestRFC8617ARCSignedHeaderNamesPreserveInternalWhitespace(t *testing.T) {
 	const prefix = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h="
 	const suffix = "; s=s; b=AAAA\r\n"

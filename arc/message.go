@@ -46,11 +46,15 @@ func (ams *ARCMessageSignature) GetCanonicalizationAndAlgorithm() *Canonicalizat
 // ヘッダ名は含まない
 func (ams ARCMessageSignature) String() string {
 	// format: i=1; a=rsa-sha256; d=example.com; s=selector; t=1234567890; h=from:to:subject; b=MIIBI...
-	return fmt.Sprintf("i=%d; a=%s; c=%s; d=%s; s=%s;\r\n"+
+	canonicalization := ""
+	if ams.Canonicalization != "" {
+		canonicalization = "c=" + ams.Canonicalization + "; "
+	}
+	return fmt.Sprintf("i=%d; a=%s; %sd=%s; s=%s;\r\n"+
 		"        h=%s;\r\n"+
 		"        bh=%s; t=%d;\r\n"+
 		"        b=%s",
-		ams.InstanceNumber, ams.Algorithm, ams.Canonicalization, ams.Domain, ams.Selector,
+		ams.InstanceNumber, ams.Algorithm, canonicalization, ams.Domain, ams.Selector,
 		ams.Headers,
 		ams.BodyHash, ams.Timestamp,
 		header.WrapSignatureWithBreaks(ams.Signature),
@@ -109,6 +113,9 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 			}
 			result.Timestamp = timestamp
 		case "c":
+			if value == "" {
+				return nil, fmt.Errorf("invalid canonicalization")
+			}
 			result.Canonicalization = value
 		case "bh":
 			result.BodyHash = value
@@ -168,7 +175,7 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		return fmt.Errorf("h= tag must include From")
 	}
 	h = header.RemoveDuplicates(h)
-	canHeader, _, err := header.ParseHeaderCanonicalization(ams.Canonicalization)
+	canHeader, canBody, err := header.ParseHeaderCanonicalization(ams.Canonicalization)
 	if err != nil {
 		return err
 	}
@@ -195,18 +202,11 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 		ams.Timestamp = time.Now().Unix()
 	}
 
-	// ams.canonnAndAlgo が未初期化の場合に初期化処理を追加
-	if ams.canonnAndAlgo == nil {
-		canHeaderCanon, canBodyCanon, err := header.ParseHeaderCanonicalization(ams.Canonicalization)
-		if err != nil {
-			return fmt.Errorf("failed to parse canonicalization: %w", err)
-		}
-		ams.canonnAndAlgo = &CanonicalizationAndAlgorithm{
-			Header:    Canonicalization(canHeaderCanon),
-			Body:      Canonicalization(canBodyCanon),
-			Algorithm: ams.Algorithm,
-			HashAlgo:  hashAlgo(ams.Algorithm),
-		}
+	ams.canonnAndAlgo = &CanonicalizationAndAlgorithm{
+		Header:    Canonicalization(canHeader),
+		Body:      Canonicalization(canBody),
+		Algorithm: ams.Algorithm,
+		HashAlgo:  hashAlgo(ams.Algorithm),
 	}
 
 	// h= タグに指定されたヘッダ名の順序でヘッダを抽出 (DKIM方式に統一)
