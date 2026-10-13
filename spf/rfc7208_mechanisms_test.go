@@ -260,6 +260,19 @@ func TestRFC7208MacroFixedExpansionAndLength(t *testing.T) {
 			}
 		})
 	}
+	ctx.Sender = `"a@b"@example.com`
+	for _, tc := range []struct {
+		input, want string
+	}{
+		{"%{l}", `"a@b"`},
+		{"%{o}", "example.com"},
+		{"%{s}", `"a@b"@example.com`},
+	} {
+		got, err := d.ReplaceMacroValues(tc.input, ctx, MacroPurposeExp)
+		if err != nil || got != tc.want {
+			t.Fatalf("quoted sender macro %s = %q, error=%v; want %q", tc.input, got, err, tc.want)
+		}
+	}
 	long := strings.Repeat("a.", 130) + "example.com"
 	got, res := expandDomainSpec(long, ctx, MacroPurposeDomainSpec)
 	if res != nil || len(got) > 253 || !strings.HasSuffix(got, ".example.com") || strings.HasPrefix(got, strings.Repeat("a.", 130)) {
