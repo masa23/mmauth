@@ -64,7 +64,7 @@ func lowerASCIIFieldName(name string) (string, bool) {
 // ヘッダをパースする
 func ParseHeaderField(s string) (string, string) {
 	key, value, _ := strings.Cut(s, ":")
-	return strings.TrimSpace(key), strings.TrimSpace(value)
+	return strings.Trim(key, " \t"), strings.TrimSpace(value)
 }
 
 // ヘッダのパラメータをパースする
@@ -273,7 +273,7 @@ func ExtractHeadersDKIM(headers []string, keys []string) []string {
 		if !ok {
 			continue
 		}
-		key, valid := lowerASCIIFieldName(strings.TrimSpace(k))
+		key, valid := lowerASCIIFieldName(strings.Trim(k, " \t"))
 		if !valid {
 			continue
 		}
@@ -282,7 +282,7 @@ func ExtractHeadersDKIM(headers []string, keys []string) []string {
 
 	// keysの左から順に処理
 	for _, key := range keys {
-		key, valid := lowerASCIIFieldName(strings.TrimSpace(key))
+		key, valid := lowerASCIIFieldName(strings.Trim(key, " \t"))
 		if !valid {
 			continue
 		}
@@ -336,7 +336,7 @@ func extractHeaders(headers []string, keys []string) []map[string][]string {
 			if !ok {
 				continue
 			}
-			if EqualASCIIFold(strings.TrimSpace(k), key) {
+			if EqualASCIIFold(strings.Trim(k, " \t"), key) {
 				if !mapsContainsKey(maps, key) {
 					maps = append(maps, map[string][]string{key: {header}})
 				} else {
@@ -369,7 +369,7 @@ func ExtractHeader(headers []string, key string) string {
 		if !ok {
 			continue
 		}
-		if EqualASCIIFold(strings.TrimSpace(k), key) {
+		if EqualASCIIFold(strings.Trim(k, " \t"), key) {
 			return k + ":" + v
 		}
 	}

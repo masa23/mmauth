@@ -342,8 +342,11 @@ func (m *MMAuth) Verify() {
 // parseMailFromIdentity accepts a mailbox or its SMTP path form, without a
 // display name or trailing data. The domain is shared by SPF and DMARC.
 func parseMailFromIdentity(mailFrom string) (string, string, error) {
-	sender := ParseAddress(mailFrom)
-	if strings.ContainsAny(sender, "\r\n") || (mailFrom != sender && mailFrom != "<"+sender+">") {
+	sender := mailFrom
+	if strings.HasPrefix(sender, "<") && strings.HasSuffix(sender, ">") {
+		sender = sender[1 : len(sender)-1]
+	}
+	if strings.ContainsAny(sender, "\r\n") {
 		return "", "", fmt.Errorf("invalid MAIL FROM")
 	}
 	addr, err := mail.ParseAddress(sender)

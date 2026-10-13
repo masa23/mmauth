@@ -72,6 +72,17 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	if params["v"] != "1" {
 		return nil, fmt.Errorf("invalid version tag value: %s", params["v"])
 	}
+	for _, tag := range []string{"d", "s"} {
+		if strings.IndexAny(params[tag], " \t\r\n") >= 0 {
+			return nil, fmt.Errorf("invalid %s= identifier", tag)
+		}
+	}
+	for _, rawName := range strings.Split(params["h"], ":") {
+		name := strings.Trim(rawName, " \t\r\n")
+		if name == "" || strings.IndexAny(name, " \t\r\n") >= 0 {
+			return nil, fmt.Errorf("invalid h= signed header name")
+		}
+	}
 	// RFC 6376 §3.5 permits FWS around a= but not inside its algorithm.
 	if strings.IndexAny(params["a"], " \t\r\n") >= 0 {
 		return nil, fmt.Errorf("invalid algorithm tag value: %q", params["a"])

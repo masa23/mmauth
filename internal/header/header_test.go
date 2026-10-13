@@ -77,6 +77,22 @@ func TestRFC5322ASCIIFieldNameMatching(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"X-Key: real\r\n"}) {
 		t.Fatalf("non-ASCII lookalike matched ASCII field: %q", got)
 	}
+	fields := []string{"X-Key\u00a0: forged\r\n", "X-Key: real\r\n"}
+	if got := ExtractHeadersDKIM(fields, []string{"X-Key"}); !reflect.DeepEqual(got, fields[1:]) {
+		t.Fatalf("Unicode whitespace matched signed field name: %q", got)
+	}
+	if got := ExtractHeadersAll(fields, []string{"x-key"}); !reflect.DeepEqual(got, fields[1:]) {
+		t.Fatalf("Unicode whitespace matched ARC field name: %q", got)
+	}
+	if got := ExtractHeader(fields, "X-Key"); got != fields[1] {
+		t.Fatalf("Unicode whitespace matched direct lookup: %q", got)
+	}
+	if name, _ := ParseHeaderField(fields[0]); name != "X-Key\u00a0" {
+		t.Fatalf("Unicode whitespace disappeared from invalid field name: %q", name)
+	}
+	if got := ExtractHeadersDKIM([]string{"X-Key \t: legacy\r\n"}, []string{"X-Key"}); len(got) != 1 {
+		t.Fatalf("obsolete ASCII whitespace before colon was rejected: %q", got)
+	}
 }
 
 func TestMain(m *testing.M) {
