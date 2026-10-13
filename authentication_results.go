@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/masa23/mmauth/internal/authres"
+	"github.com/masa23/mmauth/internal/header"
 )
 
 // AuthenticationResults is one complete RFC 8601 field. Raw retains the
@@ -21,7 +22,7 @@ type AuthenticationResults struct {
 // field, including its authserv-id, optional version, and result entries.
 func ParseAuthenticationResults(field string) (*AuthenticationResults, error) {
 	name, value, ok := strings.Cut(field, ":")
-	if !ok || !strings.EqualFold(name, "Authentication-Results") {
+	if !ok || !header.EqualASCIIFold(name, "Authentication-Results") {
 		return nil, fmt.Errorf("invalid Authentication-Results field name")
 	}
 	if !strings.HasSuffix(value, "\r\n") {
@@ -112,7 +113,7 @@ func FilterAuthenticationResults(fields []string, trustedSource bool) []string {
 	filtered := make([]string, 0, len(fields))
 	for _, field := range fields {
 		name, _, ok := strings.Cut(field, ":")
-		if ok && strings.EqualFold(strings.TrimRight(name, " \t"), "Authentication-Results") {
+		if ok && header.EqualASCIIFold(strings.TrimRight(name, " \t"), "Authentication-Results") {
 			if !trustedSource {
 				continue
 			}

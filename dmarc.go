@@ -11,6 +11,7 @@ import (
 
 	"github.com/masa23/mmauth/dkim"
 	"github.com/masa23/mmauth/dmarc"
+	"github.com/masa23/mmauth/internal/header"
 	"github.com/masa23/mmauth/spf"
 )
 
@@ -144,7 +145,7 @@ func authorDomainsFromHeaders(fields headers) ([]string, error) {
 	var from string
 	for _, field := range fields {
 		name, value, ok := strings.Cut(field, ":")
-		if !ok || !strings.EqualFold(name, "From") {
+		if !ok || !header.EqualASCIIFold(name, "From") {
 			continue
 		}
 		if from != "" {

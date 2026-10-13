@@ -65,7 +65,7 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 
 	// ヘッダと値に分割
 	name, v, ok := strings.Cut(s, ":")
-	if !ok || !strings.EqualFold(name, "ARC-Seal") {
+	if !ok || !header.EqualASCIIFold(name, "ARC-Seal") {
 		return nil, fmt.Errorf("invalid header field")
 	}
 	v = strings.TrimSuffix(v, "\r\n")
@@ -506,7 +506,7 @@ func parseARCHeadersThrough(headers []string, maxInstance int) (*signatures, err
 
 func parseAARForChain(raw string) (*ARCAuthenticationResults, error) {
 	name, value, ok := strings.Cut(raw, ":")
-	if !ok || !strings.EqualFold(name, "ARC-Authentication-Results") {
+	if !ok || !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return nil, fmt.Errorf("invalid header field")
 	}
 	value = strings.TrimSuffix(value, "\r\n")
@@ -526,15 +526,13 @@ func parseAARForChain(raw string) (*ARCAuthenticationResults, error) {
 // missing, invalid or duplicate i= tags still go through the normal parser.
 func isLaterARCHeader(raw string, maxInstance int) bool {
 	name, value := header.ParseHeaderField(raw)
-	switch strings.ToLower(name) {
-	case "arc-seal", "arc-message-signature", "arc-authentication-results":
-	default:
+	if !header.EqualASCIIFold(name, "ARC-Seal") && !header.EqualASCIIFold(name, "ARC-Message-Signature") && !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return false
 	}
 	instance, found := 0, false
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
-		if !ok || !strings.EqualFold(strings.TrimSpace(key), "i") {
+		if !ok || strings.TrimSpace(key) != "i" {
 			continue
 		}
 		if found {

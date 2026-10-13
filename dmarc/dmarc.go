@@ -347,6 +347,22 @@ func parseRecord(raw string, lookup bool) (*Record, error) {
 	pairs := strings.Split(raw, ";")
 	for i, pair := range pairs {
 		pair = trimWSP(pair)
+		// RFC 7489 §6.4 tag values are ASCII. During discovery, ignore a
+		// malformed optional tag as §6.3 recommends, but reject malformed
+		// mandatory tags and strict ParseRecord input.
+		invalidASCII := false
+		for j := 0; j < len(pair); j++ {
+			if pair[j] > '~' {
+				invalidASCII = true
+				break
+			}
+		}
+		if invalidASCII {
+			if !lookup || tagIndex < 2 {
+				return nil, fmt.Errorf("invalid DMARC record character")
+			}
+			continue
+		}
 		if pair == "" {
 			if !lookup && (i == 0 || i != len(pairs)-1) {
 				return nil, fmt.Errorf("empty tag in DMARC record")

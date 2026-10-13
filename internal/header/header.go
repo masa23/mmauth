@@ -25,6 +25,42 @@ var (
 	ErrInvalidEmailFormat = errors.New("invalid email address format")
 )
 
+// EqualASCIIFold compares RFC 5322 field names without Unicode case folding.
+// Field names consist only of ASCII bytes, so non-ASCII lookalikes must differ.
+func EqualASCIIFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if x > 127 || y > 127 {
+			return false
+		}
+		if x >= 'A' && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if y >= 'A' && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
+func lowerASCIIFieldName(name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < '!' || name[i] > '~' || name[i] == ':' {
+			return "", false
+		}
+	}
+	return strings.ToLower(name), true
+}
+
 // ヘッダをパースする
 func ParseHeaderField(s string) (string, string) {
 	key, value, _ := strings.Cut(s, ":")
@@ -236,13 +272,19 @@ func ExtractHeadersDKIM(headers []string, keys []string) []string {
 		if !ok {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(k))
+		key, valid := lowerASCIIFieldName(strings.TrimSpace(k))
+		if !valid {
+			continue
+		}
 		byName[key] = append(byName[key], header)
 	}
 
 	// keysの左から順に処理
 	for _, key := range keys {
-		key = strings.ToLower(strings.TrimSpace(key))
+		key, valid := lowerASCIIFieldName(strings.TrimSpace(key))
+		if !valid {
+			continue
+		}
 
 		// 同名ヘッダが複数存在する場合はメッセージ内の末尾側（bottom-most）から1つずつ取り出して消費
 		if headersForKey, exists := byName[key]; exists && len(headersForKey) > 0 {
@@ -293,7 +335,7 @@ func extractHeaders(headers []string, keys []string) []map[string][]string {
 			if !ok {
 				continue
 			}
-			if strings.EqualFold(strings.TrimSpace(k), key) {
+			if EqualASCIIFold(strings.TrimSpace(k), key) {
 				if !mapsContainsKey(maps, key) {
 					maps = append(maps, map[string][]string{key: {header}})
 				} else {
@@ -326,7 +368,7 @@ func ExtractHeader(headers []string, key string) string {
 		if !ok {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(k), key) {
+		if EqualASCIIFold(strings.TrimSpace(k), key) {
 			return k + ":" + v
 		}
 	}

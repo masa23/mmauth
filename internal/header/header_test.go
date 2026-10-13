@@ -69,6 +69,16 @@ func (k *testKey) getPrivateKey(keyType string) crypto.Signer {
 
 var testKeys = testKey{}
 
+func TestRFC5322ASCIIFieldNameMatching(t *testing.T) {
+	if !EqualASCIIFold("from", "From") || EqualASCIIFold("Fromé", "Fromé") || EqualASCIIFold("DKIM-ſignature", "DKIM-Signature") {
+		t.Fatal("field name comparison did not enforce ASCII case folding")
+	}
+	got := ExtractHeadersDKIM([]string{"X-Key: forged\r\n", "X-Key: real\r\n"}, []string{"X-Key"})
+	if !reflect.DeepEqual(got, []string{"X-Key: real\r\n"}) {
+		t.Fatalf("non-ASCII lookalike matched ASCII field: %q", got)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// RSA
 	block, _ := pem.Decode([]byte(testRSAPrivateKey))

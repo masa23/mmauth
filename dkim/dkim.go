@@ -236,7 +236,7 @@ func ParseSignature(s string) (*Signature, error) {
 
 	// ヘッダと値に分割
 	name, v, ok := strings.Cut(s, ":")
-	if !ok || !strings.EqualFold(name, "DKIM-Signature") {
+	if !ok || !header.EqualASCIIFold(name, "DKIM-Signature") {
 		return nil, fmt.Errorf("invalid header field")
 	}
 	v = strings.TrimSuffix(v, "\r\n")
@@ -412,13 +412,13 @@ func (d *Signature) Sign(headers []string, key crypto.Signer) error {
 	// headersのヘッダ名を抽出する
 	var h []string
 	hasFrom := false
-	for _, header := range headers {
-		k, _, ok := strings.Cut(header, ":")
+	for _, field := range headers {
+		k, _, ok := strings.Cut(field, ":")
 		if !ok {
 			continue
 		}
 		h = append(h, k)
-		if strings.EqualFold(k, "From") {
+		if header.EqualASCIIFold(k, "From") {
 			hasFrom = true
 		}
 	}

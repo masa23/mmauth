@@ -158,14 +158,12 @@ func ParseARCHeaders(headers []string) (*Signatures, error) {
 // to parse. This lets failure sealing ignore malformed historical sets.
 func arcHeaderInstance(raw string) (int, bool) {
 	name, value := header.ParseHeaderField(raw)
-	switch strings.ToLower(name) {
-	case "arc-seal", "arc-message-signature", "arc-authentication-results":
-	default:
+	if !header.EqualASCIIFold(name, "ARC-Seal") && !header.EqualASCIIFold(name, "ARC-Message-Signature") && !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return 0, false
 	}
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "i") {
+		if ok && strings.TrimSpace(key) == "i" {
 			n, err := strconv.Atoi(header.StripWhiteSpace(value))
 			return n, err == nil
 		}

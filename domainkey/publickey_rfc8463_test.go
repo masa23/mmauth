@@ -2,6 +2,7 @@ package domainkey
 
 import (
 	"crypto/ed25519"
+	"crypto/x509"
 	"testing"
 )
 
@@ -18,5 +19,15 @@ func TestRFC8463Ed25519PublicKeyLength(t *testing.T) {
 		} else if err == nil {
 			t.Fatalf("%d-octet key accepted", size)
 		}
+	}
+}
+
+func TestRFC8463Ed25519RejectsPKIXPublicKey(t *testing.T) {
+	encoded, err := x509.MarshalPKIXPublicKey(ed25519.PublicKey(make([]byte, ed25519.PublicKeySize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseDKIMPublicKey(encoded, KeyTypeED25519); err == nil {
+		t.Fatal("PKIX-encoded Ed25519 key accepted instead of raw 32-octet key")
 	}
 }

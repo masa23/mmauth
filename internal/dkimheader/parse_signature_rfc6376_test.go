@@ -12,6 +12,8 @@ func TestRFC6376TagListABNFAndFWS(t *testing.T) {
 		{"ordinary", rfc6376BaseTags, true},
 		{"version after another tag", "a=rsa-sha256; v=1; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", true},
 		{"folded separators", "v=1;\r\n a=rsa-sha256; d=example.com; s=test; h=from; bh=YW\r\n Jj; b=YWJj", true},
+		{"FWS inside algorithm", "v=1; a=rsa -sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
+		{"folded algorithm", "v=1; a=rsa-\r\n sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj", false},
 		{"unknown uppercase tag distinct", rfc6376BaseTags + "; W=one; w=two", true},
 		{"empty repeated separator", rfc6376BaseTags + ";; z=one", false},
 		{"leading separator", "; " + rfc6376BaseTags, false},

@@ -26,6 +26,7 @@ func TestRFC6376SignatureIdentityAndBase64Syntax(t *testing.T) {
 		{"bad body hash padding", "bh=YWJj", "bh=Y= WJj", false},
 		{"missing body hash", "bh=YWJj", "bh=", false},
 		{"bad signature FWS", "b=YWJj", "b=YW\r\nJj", false},
+		{"algorithm internal whitespace", "a=rsa-sha256", "a=rsa -sha256", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := strings.Replace(base, tc.replace, tc.with, 1)
@@ -76,7 +77,7 @@ func TestRFC6376AUIDQuotedPrintableStringRoundTrip(t *testing.T) {
 
 func TestRFC6376SignatureFieldNameBoundary(t *testing.T) {
 	const value = "v=1; a=rsa-sha256; d=example.com; s=test; h=from; bh=YWJj; b=YWJj"
-	for _, name := range []string{" DKIM-Signature", "DKIM-Signature "} {
+	for _, name := range []string{" DKIM-Signature", "DKIM-Signature ", "DKIM-ſignature"} {
 		if _, err := ParseSignature(name + ": " + value); err == nil {
 			t.Fatalf("invalid field name %q accepted", name)
 		}

@@ -72,6 +72,10 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	if params["v"] != "1" {
 		return nil, fmt.Errorf("invalid version tag value: %s", params["v"])
 	}
+	// RFC 6376 §3.5 permits FWS around a= but not inside its algorithm.
+	if strings.IndexAny(params["a"], " \t\r\n") >= 0 {
+		return nil, fmt.Errorf("invalid algorithm tag value: %q", params["a"])
+	}
 
 	// Type validation for specific tags
 	if err := validateTagTypes(params); err != nil {

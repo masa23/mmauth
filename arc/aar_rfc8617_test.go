@@ -74,6 +74,7 @@ func TestRFC8617AARNoResultAndMalformedCFWS(t *testing.T) {
 
 func TestRFC8617AARChainRejectsInvalidEnvelope(t *testing.T) {
 	for _, raw := range []string{
+		"ARC-Authentication-Reſults: i=1; mx.example.com; none\r\n",
 		" ARC-Authentication-Results: i=1; mx.example.com; none\r\n",
 		"ARC-Authentication-Results\v: i=1; mx.example.com; none\r\n",
 		"ARC-Authentication-Results: i=1\v; mx.example.com; none\r\n",
@@ -87,5 +88,23 @@ func TestRFC8617AARChainRejectsInvalidEnvelope(t *testing.T) {
 	}
 	if _, err := parseAARForChain("ARC-Authentication-Results: i=1; mx.example.com; broken\r\n continuation\r\n"); err != nil {
 		t.Fatalf("valid folded malformed payload rejected: %v", err)
+	}
+}
+
+func TestRFC8617ARCInstanceIgnoresUnicodeLookalikeField(t *testing.T) {
+	raw := "ARC-ſeal: i=2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n"
+	if _, ok := arcHeaderInstance(raw); ok {
+		t.Fatal("Unicode lookalike recognized as ARC-Seal")
+	}
+	if isLaterARCHeader(raw, 1) {
+		t.Fatal("Unicode lookalike recognized as a later ARC-Seal")
+	}
+	for _, raw := range []string{
+		"ARC-Seal: I=2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+		"ARC-Seal: ı=2; a=rsa-sha256; cv=pass; d=example.com; s=s; b=AAAA\r\n",
+	} {
+		if _, ok := arcHeaderInstance(raw); ok || isLaterARCHeader(raw, 1) {
+			t.Fatalf("unregistered instance tag recognized: %q", raw)
+		}
 	}
 }

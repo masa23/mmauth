@@ -53,6 +53,7 @@ func TestRFC8601AuthenticationResultsRejectsMalformedAndInjection(t *testing.T) 
 		"Authentication-Results: mx.example.com; dkim=pass",
 		"Authentication-Results : mx.example.com; dkim=pass\r\n",
 		"From: mx.example.com; dkim=pass\r\n",
+		"Authentication-Reſults: mx.example.com; none\r\n",
 	} {
 		if _, err := ParseAuthenticationResults(raw); err == nil {
 			t.Errorf("accepted malformed field %q", raw)
@@ -70,6 +71,13 @@ func TestRFC8601AuthenticationResultsRejectsMalformedAndInjection(t *testing.T) 
 		if field, err := FormatAuthenticationResults(tc.id, tc.results); err == nil {
 			t.Errorf("accepted id=%q results=%q as %q", tc.id, tc.results, field)
 		}
+	}
+}
+
+func TestRFC8601FilterDoesNotTreatUnicodeLookalikeAsRegisteredField(t *testing.T) {
+	field := "Authentication-Reſults: mx.example.com; none\r\n"
+	if got := FilterAuthenticationResults([]string{field}, false); !reflect.DeepEqual(got, []string{field}) {
+		t.Fatalf("Unicode lookalike was treated as Authentication-Results: %q", got)
 	}
 }
 

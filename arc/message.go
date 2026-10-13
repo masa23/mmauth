@@ -64,7 +64,7 @@ func ParseARCMessageSignature(s string) (*ARCMessageSignature, error) {
 
 	// ヘッダと値に分割
 	name, v, ok := strings.Cut(s, ":")
-	if !ok || !strings.EqualFold(name, "ARC-Message-Signature") {
+	if !ok || !header.EqualASCIIFold(name, "ARC-Message-Signature") {
 		return nil, fmt.Errorf("invalid header field")
 	}
 	v = strings.TrimSuffix(v, "\r\n")
@@ -160,7 +160,7 @@ func (ams *ARCMessageSignature) Sign(headers []string, key crypto.Signer) error 
 	}
 	fromSigned := false
 	for _, name := range h {
-		if strings.EqualFold(strings.TrimSpace(name), "from") {
+		if header.EqualASCIIFold(strings.TrimSpace(name), "from") {
 			fromSigned = true
 		}
 	}
@@ -248,7 +248,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 
 	fromSigned := false
 	for _, name := range strings.Split(ams.Headers, ":") {
-		if strings.EqualFold(strings.TrimSpace(name), "from") {
+		if header.EqualASCIIFold(strings.TrimSpace(name), "from") {
 			fromSigned = true
 		}
 	}
@@ -313,13 +313,13 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 	// h= タグに指定されたヘッダ名の順序でヘッダを抽出
 	// AMS自身をh=抽出から除外するために、AMSをヘッダリストから削除
 	headersWithoutAMS := make([]string, 0, len(headers))
-	for _, header := range headers {
-		k, _, ok := strings.Cut(header, ":")
+	for _, field := range headers {
+		k, _, ok := strings.Cut(field, ":")
 		if !ok {
 			continue
 		}
-		if !strings.EqualFold(strings.TrimSpace(k), "ARC-Message-Signature") {
-			headersWithoutAMS = append(headersWithoutAMS, header)
+		if !header.EqualASCIIFold(strings.TrimSpace(k), "ARC-Message-Signature") {
+			headersWithoutAMS = append(headersWithoutAMS, field)
 		}
 	}
 
@@ -331,13 +331,13 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 
 	// ヘッダの正規化
 	var s string
-	for _, header := range h {
+	for _, field := range h {
 		// h=ARC-Sealがある場合はエラー
-		k, _, ok := strings.Cut(header, ":")
+		k, _, ok := strings.Cut(field, ":")
 		if !ok {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(k), "ARC-Seal") {
+		if header.EqualASCIIFold(strings.TrimSpace(k), "ARC-Seal") {
 			return &VerifyResult{
 				status:    VerifyStatusPermErr,
 				err:       fmt.Errorf("ARC-Message-Signature header field contains ARC-Seal"),
@@ -345,7 +345,7 @@ func (ams *ARCMessageSignature) Verify(headers []string, bodyHash string, domain
 				domainKey: domainKey,
 			}
 		}
-		s += canonical.Header(header, canonical.Canonicalization(ams.canonnAndAlgo.Header))
+		s += canonical.Header(field, canonical.Canonicalization(ams.canonnAndAlgo.Header))
 	}
 
 	// AMSヘッダ自身を追加

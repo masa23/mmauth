@@ -20,6 +20,7 @@ func TestRFC7489RecordTagOrderAndUniqueness(t *testing.T) {
 		{"trailing control", "v=DMARC1; p=reject\v", false},
 		{"embedded newline", "v=DMARC1; p=reject\n", false},
 		{"non-WSP after policy", "v=DMARC1; p=reject\u00a0", false},
+		{"non-ASCII unknown tag value", "v=DMARC1; p=reject; x-future=é", false},
 		{"leading whitespace", " v=DMARC1; p=reject", false},
 		{"missing version", "p=reject", false},
 		{"wrong version", "v=DMARC2; p=reject", false},
@@ -43,6 +44,16 @@ func TestRFC7489RecordTagOrderAndUniqueness(t *testing.T) {
 				t.Fatalf("ParseRecord(%q) error=%v, valid=%v", tc.record, err, tc.valid)
 			}
 		})
+	}
+}
+
+func TestRFC7489LookupIgnoresMalformedOptionalTag(t *testing.T) {
+	record, err := parseRecordForLookup("v=DMARC1; p=reject; x-future=é")
+	if err != nil || record.Policy != PolicyReject {
+		t.Fatalf("malformed optional tag: record=%+v, error=%v", record, err)
+	}
+	if _, err := parseRecordForLookup("v=DMARC1; p=réject"); err == nil {
+		t.Fatal("malformed mandatory policy tag accepted")
 	}
 }
 

@@ -20,6 +20,9 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 		{"AS", "ARC-Seal: i=1; a=rsa-sha256; cv=none; d=example.com; s=s; b=AAAA", []string{"i", "a", "cv", "d", "s", "b"}, func(s string) error { _, e := ParseARCSeal(s); return e }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if e := tc.parse(strings.Replace(tc.raw, "S", "ſ", 1)); e == nil {
+				t.Error("Unicode field name lookalike accepted")
+			}
 			if e := tc.parse(tc.raw + ";\r\n"); e != nil {
 				t.Fatal(e)
 			}

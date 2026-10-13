@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/masa23/mmauth/internal/authres"
+	"github.com/masa23/mmauth/internal/header"
 )
 
 // ARC-Authentication-Results の構造体
@@ -46,7 +47,7 @@ func (aar ARCAuthenticationResults) String() string {
 // assessment entries, preserving signed raw bytes for seal validation.
 func ParseARCAuthenticationResults(s string) (*ARCAuthenticationResults, error) {
 	name, value, ok := strings.Cut(s, ":")
-	if !ok || !strings.EqualFold(name, "ARC-Authentication-Results") {
+	if !ok || !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return nil, fmt.Errorf("invalid header field")
 	}
 	value = strings.TrimSuffix(value, "\r\n")
