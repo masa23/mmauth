@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/masa23/mmauth/dkim"
 	"github.com/masa23/mmauth/dmarc"
 	"github.com/masa23/mmauth/domainkey"
 	"github.com/masa23/mmauth/spf"
@@ -180,6 +181,47 @@ func TestRFC7489PublicDMARCDKIMIntegration(t *testing.T) {
 	}
 }
 
+func TestRFC7489DMARCReverifiesCachedDKIMWithDNSKey(t *testing.T) {
+	oldDMARC, oldSPF, oldDKIM := dmarc.DefaultResolver, spf.DefaultTXTResolver, domainkey.DefaultResolver
+	t.Cleanup(func() {
+		dmarc.DefaultResolver, spf.DefaultTXTResolver, domainkey.DefaultResolver = oldDMARC, oldSPF, oldDKIM
+	})
+	dmarc.DefaultResolver = func(string) ([]string, error) { return []string{"v=DMARC1; p=reject"}, nil }
+	spf.DefaultTXTResolver = func(string) ([]string, error) { return []string{"v=spf1 -all"}, nil }
+	m := NewMMAuth()
+	if _, err := m.Write([]byte(rfc8463MessageWithCRLF())); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, sig := range *m.AuthenticationHeaders.DKIMSignatures {
+		record := rfc8463RSARecord
+		if sig.Selector == "brisbane" {
+			record = rfc8463EdRecord
+		}
+		key, err := domainkey.ParseDomainKeyRecord(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		can := sig.GetCanonicalizationAndAlgorithm()
+		bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
+			Body: Canonicalization(can.Body), Algorithm: can.HashAlgo,
+			Limit: sig.Limit, LimitSet: sig.LimitSet,
+		})
+		sig.Verify(m.Headers, bodyHash, &key)
+		if sig.VerifyResult.Status() != dkim.VerifyStatusPass {
+			t.Fatalf("cached verification for %s: %s", sig.Selector, sig.VerifyResult.Status())
+		}
+	}
+	lookups := 0
+	domainkey.DefaultResolver = func(string) ([]string, error) { lookups++; return nil, nil }
+	got, err := m.EvaluateDMARC(net.ParseIP("192.0.2.1"), "helo.example.net", "sender@example.net")
+	if err != nil || got.Status != dmarc.EvaluationFail || got.Disposition != dmarc.PolicyReject || lookups != 2 {
+		t.Fatalf("result=%+v error=%v DKIM DNS lookups=%d", got, err, lookups)
+	}
+}
+
 func TestRFC7489PublicDMARCPolicyDiscoveryErrors(t *testing.T) {
 	old := dmarc.DefaultResolver
 	t.Cleanup(func() { dmarc.DefaultResolver = old })
@@ -267,6 +309,54 @@ func TestRFC7489MultivaluedFromSelectsStrictestFailedPolicy(t *testing.T) {
 			}
 			if got.Status != dmarc.EvaluationFail || got.Policy != dmarc.PolicyReject || got.Disposition != tc.wantAction || len(queried) != 2 {
 				t.Fatalf("result=%+v queries=%v", got, queried)
+			}
+		})
+	}
+}
+
+func TestRFC7489MultivaluedFromContinuesAfterPolicyLookupError(t *testing.T) {
+	oldDMARC, oldSPF := dmarc.DefaultResolver, spf.DefaultTXTResolver
+	t.Cleanup(func() { dmarc.DefaultResolver, spf.DefaultTXTResolver = oldDMARC, oldSPF })
+	spf.DefaultTXTResolver = func(string) ([]string, error) { return []string{"v=spf1 -all"}, nil }
+	for _, tc := range []struct {
+		name, from, validPolicy string
+		lookupErr               error
+		wantStatus              dmarc.EvaluationStatus
+		wantAction              dmarc.PolicyType
+		wantErr                 bool
+	}{
+		{"DNS error first, reject second", "a@example.com, b@example.net", "reject", errors.New("SERVFAIL"), dmarc.EvaluationFail, dmarc.PolicyReject, false},
+		{"reject first, DNS error second", "b@example.net, a@example.com", "reject", errors.New("SERVFAIL"), dmarc.EvaluationFail, dmarc.PolicyReject, false},
+		{"multiple records first, reject second", "a@example.com, b@example.net", "reject", nil, dmarc.EvaluationFail, dmarc.PolicyReject, false},
+		{"DNS error and none policy", "a@example.com, b@example.net", "none", errors.New("SERVFAIL"), dmarc.EvaluationTempError, dmarc.PolicyNone, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lookups := 0
+			dmarc.DefaultResolver = func(name string) ([]string, error) {
+				lookups++
+				switch name {
+				case "_dmarc.example.com":
+					if tc.lookupErr == nil {
+						return []string{"v=DMARC1; p=reject", "v=DMARC1; p=none"}, nil
+					}
+					return nil, tc.lookupErr
+				case "_dmarc.example.net":
+					return []string{"v=DMARC1; p=" + tc.validPolicy}, nil
+				default:
+					t.Fatalf("unexpected DMARC lookup %q", name)
+					return nil, nil
+				}
+			}
+			m := NewMMAuth()
+			if _, err := m.Write([]byte("From: " + tc.from + "\r\nDate: Tue, 05 Feb 2019 00:00:00 +0000\r\n\r\nbody\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got, err := m.EvaluateDMARC(net.ParseIP("192.0.2.1"), "helo.example.org", "sender@example.org")
+			if got.Status != tc.wantStatus || got.Disposition != tc.wantAction || (err != nil) != tc.wantErr || lookups != 2 {
+				t.Fatalf("result=%+v error=%v lookups=%d", got, err, lookups)
 			}
 		})
 	}

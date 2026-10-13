@@ -57,7 +57,7 @@ func TestRFC6376RequiredTagsAndIdentity(t *testing.T) {
 
 func TestRFC6376UnsignedDecimalSignatureTags(t *testing.T) {
 	const base = "DKIM-Signature: v=1; a=ed25519-sha256; d=example.com; s=s; h=From; bh=AA==; b=AA==; %s\r\n"
-	for _, tag := range []string{"l=+1", "t=-1", "t=+1", "x=-1", "x=+1"} {
+	for _, tag := range []string{"l=+1", "t=-1", "t=+1", "x=-1", "x=+1", "t=1000000000000", "x=1000000000000"} {
 		t.Run(tag, func(t *testing.T) {
 			if _, err := ParseSignature(fmt.Sprintf(base, tag)); err == nil {
 				t.Fatalf("signed decimal tag %q accepted", tag)

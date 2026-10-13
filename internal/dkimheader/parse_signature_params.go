@@ -210,7 +210,7 @@ func isValidDKIMTag(tag string) bool {
 func validateTagTypes(params map[string]string) error {
 	// Validate t and x tags (timestamps) - must be integers
 	if tVal, exists := params["t"]; exists {
-		if !isUnsignedDecimal(tVal) {
+		if len(tVal) > 12 || !isUnsignedDecimal(tVal) {
 			return fmt.Errorf("invalid timestamp 't' value: %s", tVal)
 		}
 		if _, err := strconv.ParseInt(tVal, 10, 64); err != nil {
@@ -219,7 +219,7 @@ func validateTagTypes(params map[string]string) error {
 	}
 
 	if xVal, exists := params["x"]; exists {
-		if !isUnsignedDecimal(xVal) {
+		if len(xVal) > 12 || !isUnsignedDecimal(xVal) {
 			return fmt.Errorf("invalid expiration 'x' value: %s", xVal)
 		}
 		if _, err := strconv.ParseInt(xVal, 10, 64); err != nil {

@@ -33,6 +33,8 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 		record *dmarc.Record
 	}
 	var policies []authorPolicy
+	var discoveryErr error
+	var discoveryStatus dmarc.EvaluationStatus
 	seenCanonical := make(map[string]bool, len(authors))
 	for _, author := range authors {
 		canonical, normalizeErr := dmarc.NormalizeAuthorDomain(author)
@@ -52,34 +54,39 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 			if errors.Is(lookupErr, dmarc.ErrDNSLookupFailed) {
 				status = dmarc.EvaluationTempError
 			}
-			return dmarc.Evaluation{Status: status, Disposition: dmarc.PolicyNone}, lookupErr
+			if discoveryErr == nil || status == dmarc.EvaluationTempError {
+				discoveryErr, discoveryStatus = lookupErr, status
+			}
+			continue
 		}
 		policies = append(policies, authorPolicy{canonical, record})
 	}
 	if len(policies) == 0 {
+		if discoveryErr != nil {
+			return dmarc.Evaluation{Status: discoveryStatus, Disposition: dmarc.PolicyNone}, discoveryErr
+		}
 		return dmarc.Evaluation{Status: dmarc.EvaluationNone, Disposition: dmarc.PolicyNone}, nil
 	}
 	if m.AuthenticationHeaders == nil {
 		return result, fmt.Errorf("authentication headers are unavailable")
 	}
-	// Verification is idempotent for the result but can repeat DNS queries, so
-	// only verify signatures whose result has not yet been populated.
+	// A cached result may have used a caller-supplied key. DMARC requires a
+	// signature verified against the signing domain's DNS key.
 	var signatures []dmarc.DKIMIdentity
 	if m.AuthenticationHeaders.DKIMSignatures != nil {
 		for _, signature := range *m.AuthenticationHeaders.DKIMSignatures {
 			if signature == nil {
 				continue
 			}
-			if signature.VerifyResult == nil {
-				can := signature.GetCanonicalizationAndAlgorithm()
-				if can != nil {
-					bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
-						Body: Canonicalization(can.Body), Algorithm: can.HashAlgo,
-						Limit: signature.Limit, LimitSet: signature.LimitSet,
-					})
-					signature.Verify(m.Headers, bodyHash, nil)
-				}
+			can := signature.GetCanonicalizationAndAlgorithm()
+			if can == nil {
+				continue
 			}
+			bodyHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{
+				Body: Canonicalization(can.Body), Algorithm: can.HashAlgo,
+				Limit: signature.Limit, LimitSet: signature.LimitSet,
+			})
+			signature.Verify(m.Headers, bodyHash, nil)
 			identity := dmarc.DKIMIdentity{Domain: signature.Domain}
 			if signature.VerifyResult != nil {
 				identity.Passed = signature.VerifyResult.Status() == dkim.VerifyStatusPass
@@ -107,6 +114,9 @@ func (m *MMAuth) EvaluateDMARC(remoteAddr net.IP, helo, mailFrom string) (dmarc.
 		if evaluationRank(candidate) > evaluationRank(result) {
 			result = candidate
 		}
+	}
+	if discoveryErr != nil && (result.Status != dmarc.EvaluationFail || result.Disposition == dmarc.PolicyNone) {
+		return dmarc.Evaluation{Status: discoveryStatus, Disposition: dmarc.PolicyNone}, discoveryErr
 	}
 	return result, nil
 }
