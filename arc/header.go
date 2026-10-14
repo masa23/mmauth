@@ -2,9 +2,9 @@ package arc
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -158,15 +158,17 @@ func ParseARCHeaders(headers []string) (*Signatures, error) {
 // to parse. This lets failure sealing ignore malformed historical sets.
 func arcHeaderInstance(raw string) (int, bool) {
 	name, value := header.ParseHeaderField(raw)
-	switch strings.ToLower(name) {
-	case "arc-seal", "arc-message-signature", "arc-authentication-results":
-	default:
+	if !header.EqualASCIIFold(name, "ARC-Seal") && !header.EqualASCIIFold(name, "ARC-Message-Signature") && !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return 0, false
+	}
+	if header.EqualASCIIFold(name, "ARC-Authentication-Results") {
+		instance, _, err := authres.ParseARCInstance(value)
+		return instance, err == nil
 	}
 	for _, field := range strings.Split(value, ";") {
 		key, value, ok := strings.Cut(field, "=")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "i") {
-			n, err := strconv.Atoi(header.StripWhiteSpace(value))
+		if ok && strings.Trim(key, " \t\r\n") == "i" {
+			n, err := authres.ParseARCPosition(strings.Trim(value, " \t\r\n"))
 			return n, err == nil
 		}
 	}

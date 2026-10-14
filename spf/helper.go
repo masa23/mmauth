@@ -8,48 +8,12 @@ import (
 )
 
 func isSPFRecord(record string) bool {
-	trimmedRecord := strings.TrimSpace(record)
-	parts := strings.Fields(trimmedRecord)
-	// レコードが "v=spf1" で始まるかどうかをチェックします（大文字小文字を区別しません）
-	// Check if the record starts with "v=spf1" (case-insensitive)
-	if len(parts) == 0 || strings.ToLower(parts[0]) != "v=spf1" {
-		return false
-	}
-
-	// レコードにASCII文字のみが含まれ、制御文字が含まれていないことをチェックします
-	// Check that the record contains only ASCII characters and no control characters
-	for _, r := range record {
-		// 表示可能なASCII文字（スペースからチルダまで）とタブを許可します
-		// Allow printable ASCII characters (from space to tilde) and tabs
-		if r < 32 || r > 126 {
-			// タブ（ASCII 9）とスペース（ASCII 32）を許可します
-			// Allow tab (ASCII 9) and space (ASCII 32)
-			if r != '\t' && r != ' ' {
-				return false
-			}
-		}
-	}
-
-	// "v=spf1" の出現回数をカウントします
-	// Count occurrences of "v=spf1"
-	vSpf1Count := 0
-	for _, part := range parts {
-		// RFC 4408/7208 では、バージョン識別子 "v=spf1" は大文字小文字を区別しません。
-		// したがって、大文字小文字を区別しない方法で比較する必要があります。
-		// これにより、"V=spf1" や "v=SPF1" のようなレコードもカウントされ、
-		// "v=spf1 ... V=spf1" のような重複がある場合は、正しく permerror になります。
-		// In RFC 4408/7208, the version identifier "v=spf1" is case-insensitive.
-		// Therefore, comparisons must be done in a case-insensitive manner.
-		// This ensures that records like "V=spf1" or "v=SPF1" are also counted,
-		// and if there are duplicates like "v=spf1 ... V=spf1", it correctly results in permerror.
-		if strings.ToLower(part) == "v=spf1" {
-			vSpf1Count++
-		}
-	}
-	if vSpf1Count != 1 {
-		return false
-	}
-	return true
+	// RFC 7208 §4.5 selects a record only when the version starts at the
+	// beginning and is followed by SP or the end of the TXT record. Syntax
+	// elsewhere is checked by ParseRecord after selection.
+	return len(record) >= len("v=spf1") &&
+		strings.EqualFold(record[:len("v=spf1")], "v=spf1") &&
+		(len(record) == len("v=spf1") || record[len("v=spf1")] == ' ')
 }
 
 // isValidDomain は RFC 1035 および RFC 7208 に従ってドメイン名が有効かどうかをチェックします。

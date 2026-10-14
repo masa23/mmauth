@@ -22,10 +22,7 @@ func readHeader(r *bufio.Reader) (headers, error) {
 			// RFC 5322 permits headers without a body or separator. Accept EOF
 			// only after complete header lines, keeping truncated lines invalid.
 			if err == io.EOF && l == "" && len(h) > 0 {
-				if !validHeaderFieldNames(h) {
-					return h, fmt.Errorf("failed to read header: invalid header field")
-				}
-				return h, nil
+				break
 			}
 			return h, fmt.Errorf("failed to read header: %v", err)
 		}
@@ -41,6 +38,9 @@ func readHeader(r *bufio.Reader) (headers, error) {
 		}
 	}
 
+	if !validHeaderFieldNames(h) {
+		return h, fmt.Errorf("failed to read header: invalid header field")
+	}
 	return h, nil
 }
 

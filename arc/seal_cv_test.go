@@ -2,6 +2,7 @@ package arc
 
 import (
 	"crypto"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -43,5 +44,25 @@ func TestARCSealMissingCV(t *testing.T) {
 	// Forbidden tags cannot substitute for an explicit cv tag.
 	if _, err := ParseARCSeal(strings.Replace(headers[last], "i=1;", "i=1; h=from;", 1)); err == nil {
 		t.Fatal("forbidden tag concealed missing cv")
+	}
+}
+
+func TestRFC8617ARCSealCVValueCase(t *testing.T) {
+	const base = "ARC-Seal: i=1; a=rsa-sha256; cv=%s; d=example.org; s=selector; b=AAAA"
+	for _, tc := range []struct {
+		input string
+		want  ChainValidationResult
+	}{
+		{"NONE", ChainValidationResultNone},
+		{"Pass", ChainValidationResultPass},
+		{"FAIL", ChainValidationResultFail},
+	} {
+		seal, err := ParseARCSeal(fmt.Sprintf(base, tc.input))
+		if err != nil || seal.ChainValidation != tc.want {
+			t.Fatalf("cv=%s: seal=%+v error=%v", tc.input, seal, err)
+		}
+	}
+	if _, err := ParseARCSeal(strings.Replace(fmt.Sprintf(base, "none"), "cv=", "CV=", 1)); err == nil {
+		t.Fatal("case-distinct CV tag accepted as required cv")
 	}
 }

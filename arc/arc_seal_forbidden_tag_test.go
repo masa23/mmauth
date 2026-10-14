@@ -44,28 +44,33 @@ func TestParseARCSealForbiddenTags(t *testing.T) {
 			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
 		},
 		{
+			name:                "forbidden tag before cv",
+			input:               "ARC-Seal: i=1; a=rsa-sha256; h=From; cv=none; d=example.org; s=selector; b=signature",
+			wantChainValidation: ChainValidationResultFail,
+		},
+		{
 			name: "ARC-Seal with uppercase 'H' tag",
 			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; H=From:To;\r\n" +
 				"        d=example.org; s=selector;\r\n" +
 				"        b=signature",
-			wantErr:             false,                     // エラーを返さない
-			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
+			wantErr:             false,
+			wantChainValidation: ChainValidationResultNone,
 		},
 		{
 			name: "ARC-Seal with uppercase 'BH' tag",
 			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; BH=bodyhash;\r\n" +
 				"        d=example.org; s=selector;\r\n" +
 				"        b=signature",
-			wantErr:             false,                     // エラーを返さない
-			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
+			wantErr:             false,
+			wantChainValidation: ChainValidationResultNone,
 		},
 		{
-			name: "ARC-Seal with mixed case 'h' tag",
-			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; H=From:To;\r\n" +
+			name: "ARC-Seal with mixed case 'Bh' tag",
+			input: "ARC-Seal: i=1; a=rsa-sha256; t=12345; cv=none; Bh=bodyhash;\r\n" +
 				"        d=example.org; s=selector;\r\n" +
 				"        b=signature",
-			wantErr:             false,                     // エラーを返さない
-			wantChainValidation: ChainValidationResultFail, // cv=failが設定されることを確認
+			wantErr:             false,
+			wantChainValidation: ChainValidationResultNone,
 		},
 	}
 

@@ -88,7 +88,7 @@ func TestFallbackStopsOnLookupError(t *testing.T) {
 }
 
 func TestExplicitDMARCValuesAndEffectivePolicy(t *testing.T) {
-	r, err := ParseRecord("v=DMARC1; p=reject; pct=0; adkim=s; aspf=s; ri=0; fo=1:d; rf=afrf; sp=quarantine")
+	r, err := ParseRecord("v=DMARC1; p=reject; pct=0; adkim=s; aspf=s; ri=0; fo=1:d; ruf=mailto:failure@example.com; rf=afrf; sp=quarantine")
 	if err != nil {
 		t.Fatal(err)
 	}

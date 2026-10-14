@@ -113,14 +113,14 @@ func validateDomainMacros(value string) error {
 func ParseRecord(record string) (*Record, *Result) {
 	var rec Record
 	rec.Raw = record
-	// RFC 7208 4.5/2 に従って末尾のスペースをトリム
-	record = strings.TrimRight(record, " \t")
+	// RFC 7208 §4.5 allows trailing SP, but not trailing HTAB.
+	record = strings.TrimRight(record, " ")
 
 	// nospace1ケースの確認：レコードが"v=spf1"で始まるが、次の文字がスペースまたは文字列の終わりでない場合、
 	// これは無効なレコードです。これは、スペースなしで結合されたTXTフラグメントを処理します。
 	if strings.HasPrefix(record, "v=spf1") {
-		if len(record) > 6 && record[6] != ' ' && record[6] != '\t' {
-			// "v=spf1"の後の文字がスペースまたはタブではないため、有効なSPFレコードではありません
+		if len(record) > 6 && record[6] != ' ' {
+			// "v=spf1"の後が SP または終端でなければ SPF 候補ではありません。
 			return nil, &Result{Status: None, Reason: "invalid SPF record: no space after version"}
 		}
 	}
@@ -140,18 +140,10 @@ func ParseRecord(record string) (*Record, *Result) {
 		return nil, &Result{Status: PermError, Reason: "invalid SPF record: empty"}
 	}
 
-	// RFC 7208: SPFレコードは7ビットASCIIで、制御文字を含んではなりません
+	// RFC 7208 §4.6.1 uses SP to separate terms; HTAB is a syntax error.
 	for _, r := range record {
-		// 表示可能なASCII文字（スペースからチルダ）とタブを許可
 		if r < 32 || r > 126 {
-			// タブ（ASCII 9）とスペース（ASCII 32）を許可
-			if r != '\t' && r != ' ' {
-				return nil, &Result{Status: PermError, Reason: "SPF record contains invalid characters"}
-			}
-		}
-		// 非ASCII文字の確認
-		if r > 127 {
-			return nil, &Result{Status: PermError, Reason: "SPF record contains non-ASCII characters"}
+			return nil, &Result{Status: PermError, Reason: "SPF record contains invalid characters"}
 		}
 	}
 

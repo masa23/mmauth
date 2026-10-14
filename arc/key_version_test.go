@@ -67,14 +67,17 @@ func TestARCKeyVersions(t *testing.T) {
 						t.Fatalf("keys must be fetched independently: %v", queries)
 					}
 				} else {
-					sk, err := domainkey.ParseDomainKeyRecord(sealRecord)
+					// Explicit keys can come from a cache, so exercise version
+					// validation independently of DNS record parsing.
+					sk, err := domainkey.ParseDomainKeyRecord(record("", sealDK.PublicKey))
 					if err != nil {
 						t.Fatal(err)
 					}
-					mk, err := domainkey.ParseDomainKeyRecord(messageRecord)
+					mk, err := domainkey.ParseDomainKeyRecord(record("", messageDK.PublicKey))
 					if err != nil {
 						t.Fatal(err)
 					}
+					sk.Version, mk.Version = tc.sealVersion, tc.messageVersion
 					sig.VerifyWithKeys(headers, bh, &sk, &mk)
 					if len(queries) != 0 {
 						t.Fatalf("explicit keys caused DNS lookup: %v", queries)

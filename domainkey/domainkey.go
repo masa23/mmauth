@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type TXTLookupFunc func(name string) ([]string, error)
@@ -191,18 +192,27 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 // parseDomainKeyRecords parses DNS TXT records and extracts the domain key.
 // Returns the first valid domain key with a non-empty public key.
 func parseDomainKeyRecords(records []string) (DomainKey, error) {
+	var firstErr error
 	for _, r := range records {
 		domainKey, err := ParseDomainKeyRecord(r)
 		if err != nil {
-			return DomainKey{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if domainKey.PublicKey != "" {
 			return domainKey, nil
 		}
 		// p=が空の場合はキーが撤回されたとみなす
 		if err := isKeyRevoked(r, domainKey); err != nil {
-			return DomainKey{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if firstErr != nil {
+		return DomainKey{}, firstErr
 	}
 	return DomainKey{}, ErrNoRecordFound
 }
@@ -240,15 +250,48 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 func ParseDomainKeyRecord(r string) (DomainKey, error) {
 	var key DomainKey
 	key.raw = r
+	// Keep the empty input behavior of this parser; a DNS lookup still rejects
+	// it because it does not contain a public key.
+	if r == "" {
+		return key, nil
+	}
+	if err := validateKeyTagListCharacters(r); err != nil {
+		return DomainKey{}, err
+	}
+	seen := make(map[string]bool)
+	tagCount := 0
 
 	pairs := strings.Split(r, ";")
-	for _, pair := range pairs {
-		k, v, _ := strings.Cut(pair, "=")
+	for i, pair := range pairs {
+		if strings.TrimSpace(pair) == "" {
+			if i == len(pairs)-1 && i > 0 {
+				continue // RFC 6376 §3.2 permits one trailing semicolon.
+			}
+			return DomainKey{}, fmt.Errorf("invalid domain key tag-list")
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			return DomainKey{}, fmt.Errorf("invalid domain key tag-list")
+		}
 		// 値の前後の空白をトリム
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
-		switch strings.ToLower(k) {
+		if !validKeyTagName(k) {
+			return DomainKey{}, fmt.Errorf("invalid domain key tag name %q", k)
+		}
+		if seen[k] {
+			return DomainKey{}, fmt.Errorf("duplicate domain key tag %q", k)
+		}
+		seen[k] = true
+		if k == "v" && tagCount != 0 {
+			return DomainKey{}, fmt.Errorf("domain key version tag must be first")
+		}
+		tagCount++
+		switch k {
 		case "v":
+			if v != "DKIM1" {
+				return DomainKey{}, ErrInvalidVersion
+			}
 			key.Version = v
 			continue
 		case "h":
@@ -278,8 +321,8 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 		case "n":
 			key.Notes = v
 		case "p":
-			// 空白を削除して格納
-			key.PublicKey = strings.ReplaceAll(v, " ", "")
+			// RFC 6376 §3.6.1 allows FWS anywhere in base64string.
+			key.PublicKey = strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(v)
 		case "s":
 			key.ServiceRestricted = true
 			serviceTypes := strings.Split(v, ":")
@@ -315,6 +358,39 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 	}
 
 	return key, nil
+}
+
+func validateKeyTagListCharacters(s string) error {
+	if !utf8.ValidString(s) {
+		return fmt.Errorf("invalid domain key tag-list UTF-8")
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\r' {
+			if i+2 >= len(s) || s[i+1] != '\n' || (s[i+2] != ' ' && s[i+2] != '\t') {
+				return fmt.Errorf("invalid domain key tag-list folding")
+			}
+			i++
+			continue
+		}
+		if c == '\n' || (c < ' ' && c != '\t') || c > '~' {
+			return fmt.Errorf("invalid domain key tag-list character")
+		}
+	}
+	return nil
+}
+
+func validKeyTagName(name string) bool {
+	if name == "" || !((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // AllowsHash reports whether an algorithm is permitted by h=. An explicitly

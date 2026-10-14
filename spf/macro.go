@@ -379,14 +379,14 @@ func expandMacro(me MacroExpr, sender, domain, helo, receiver string, ip net.IP,
 	case MacroSender:
 		raw = sender
 	case MacroLocalPart:
-		at := strings.Index(sender, "@")
+		at := strings.LastIndexByte(sender, '@')
 		if at >= 0 {
 			raw = sender[:at]
 		} else {
 			raw = sender
 		}
 	case MacroDomainPart:
-		at := strings.Index(sender, "@")
+		at := strings.LastIndexByte(sender, '@')
 		if at >= 0 {
 			raw = sender[at+1:]
 		} else {

@@ -281,68 +281,26 @@ func (d *dnsResolverImpl) lookupRecord(domain string) (*Record, *Result) {
 		return nil, result
 	}
 
-	found := 0
-	validRecords := []string{}
-	spfLikeCount := 0 // SPFレコードのように見えるレコードの数（"v="で始まる）
+	var spfRecords []string
 	for _, rec := range records {
-		isSPF := isSPFRecord(rec)
-		if isSPF {
-			found++
-			validRecords = append(validRecords, rec)
-		} else {
-		}
-		// permerror検出のために、レコードがSPFレコードのように見える（"v=spf1"で始まる）かどうかをチェックします
-		// "v=spf10"のようなレコードをSPFレコードとしてカウントしないように、
-		// isSPFRecordによって有効なSPFレコードと見なされるレコードのみをカウントします。
-		// trimmedRec := strings.TrimSpace(rec)
-		// if strings.HasPrefix(strings.ToLower(trimmedRec), "v=spf1") {
-		// 	spfLikeCount++
-		// }
-		// 実際には、isSPFRecordチェックに合格したレコードのみをカウントする必要があります。
-		// 以前のアプローチは広すぎました。
-		// Actually, only records that pass the isSPFRecord check should be counted.
-		// The previous approach was too broad.
-		if isSPF {
-			spfLikeCount++
+		if isSPFRecord(rec) {
+			spfRecords = append(spfRecords, rec)
 		}
 	}
-
-	// SPFレコードのように見えるレコードが複数ある場合は、permerrorを返します
-	// If multiple records look like SPF records, return permerror
-	if spfLikeCount > 1 {
+	if len(spfRecords) > 1 {
 		return nil, &Result{Status: PermError, Reason: "multiple SPF records found"}
 	}
-
-	if found == 1 {
-		parsedRecord, parseResult := ParseRecord(validRecords[0])
+	if len(spfRecords) == 1 {
+		parsedRecord, parseResult := ParseRecord(spfRecords[0])
 		if parseResult != nil {
-			// ParseRecordでエラーが発生した場合は、そのエラーを返す
-			// ParseRecordでエラーが発生した場合は、そのエラーを返す
 			return nil, parseResult
 		}
 		return parsedRecord, nil
 	}
-	if found > 1 {
-		return nil, &Result{Status: PermError, Reason: "multiple SPF records found"}
+	if len(records) == 0 {
+		return nil, &Result{Status: None, Reason: "no TXT records found"}
 	}
-	// SPFレコードが見つからなかった場合、noneを返す
-	// 無効なレコードが見つかった場合、permerrorを返す
-	// If no SPF record is found, return none
-	// If an invalid record is found, return permerror
-	if len(records) > 0 {
-		// "v=spf1"で始まるが不正な形式のレコードがないかチェックします
-		// Check if there are any records that start with "v=spf1" but are malformed
-		for _, rec := range records {
-			trimmedRec := strings.TrimSpace(rec)
-			parts := strings.Fields(trimmedRec)
-			if len(parts) > 0 && strings.HasPrefix(strings.ToLower(parts[0]), "v=") &&
-				strings.ToLower(strings.TrimPrefix(parts[0], "v=")) == "spf1" {
-				return nil, &Result{Status: PermError, Reason: "malformed SPF record"}
-			}
-		}
-		return nil, &Result{Status: None, Reason: "no SPF record found"}
-	}
-	return nil, &Result{Status: None, Reason: "no TXT records found"}
+	return nil, &Result{Status: None, Reason: "no SPF record found"}
 }
 
 // CheckSPF はSPFレコードを評価して結果を返します。

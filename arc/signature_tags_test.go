@@ -20,8 +20,39 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 		{"AS", "ARC-Seal: i=1; a=rsa-sha256; cv=none; d=example.com; s=s; b=AAAA", []string{"i", "a", "cv", "d", "s", "b"}, func(s string) error { _, e := ParseARCSeal(s); return e }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if e := tc.parse(strings.Replace(tc.raw, "S", "ſ", 1)); e == nil {
+				t.Error("Unicode field name lookalike accepted")
+			}
 			if e := tc.parse(tc.raw + ";\r\n"); e != nil {
 				t.Fatal(e)
+			}
+			if e := tc.parse(strings.Replace(tc.raw, "i=1; a=rsa-sha256", "a=rsa-sha256; i=1", 1)); e == nil {
+				t.Error("instance tag outside first position accepted")
+			}
+			for _, number := range []string{"+1", "0001", "00", "51"} {
+				if e := tc.parse(strings.Replace(tc.raw, "i=1;", "i="+number+";", 1)); e == nil {
+					t.Errorf("invalid ARC instance %q accepted", number)
+				}
+			}
+			if e := tc.parse(strings.Replace(tc.raw, "i=1;", "i=01;", 1)); e != nil {
+				t.Errorf("RFC 8617 1*2DIGIT position 01 rejected: %v", e)
+			}
+			for _, timestamp := range []string{"-1", "+1", "1234567890123", "1 2"} {
+				if e := tc.parse(tc.raw + "; t=" + timestamp); e == nil {
+					t.Errorf("invalid ARC timestamp %q accepted", timestamp)
+				}
+			}
+			if e := tc.parse(tc.raw + "; t=123456789012"); e != nil {
+				t.Errorf("valid 12-digit ARC timestamp rejected: %v", e)
+			}
+			if e := tc.parse(strings.Replace(tc.raw, ": ", ": ; ", 1)); e == nil {
+				t.Error("leading empty tag accepted")
+			}
+			fieldName, _, _ := strings.Cut(tc.raw, ":")
+			for _, badName := range []string{" " + fieldName, fieldName + " "} {
+				if e := tc.parse(strings.Replace(tc.raw, fieldName+":", badName+":", 1)); e == nil {
+					t.Fatalf("invalid field name %q accepted", badName)
+				}
 			}
 			for _, tag := range tc.required {
 				t.Run("missing/"+tag, func(t *testing.T) {
@@ -42,34 +73,180 @@ func TestARCSignatureRequiredTags(t *testing.T) {
 						t.Fatal("duplicate tag accepted")
 					}
 				})
-				if tag != "b" {
-					t.Run("empty/"+tag, func(t *testing.T) {
-						name, body, _ := strings.Cut(tc.raw, ": ")
-						fields := strings.Split(body, "; ")
-						for i, field := range fields {
-							if strings.HasPrefix(field, tag+"=") {
-								fields[i] = tag + "="
-							}
+				t.Run("empty/"+tag, func(t *testing.T) {
+					name, body, _ := strings.Cut(tc.raw, ": ")
+					fields := strings.Split(body, "; ")
+					for i, field := range fields {
+						if strings.HasPrefix(field, tag+"=") {
+							fields[i] = tag + "="
 						}
+					}
 
-						if e := tc.parse(name + ": " + strings.Join(fields, "; ")); e == nil {
-							t.Fatal("empty required tag accepted")
-						}
-					})
-				}
+					if e := tc.parse(name + ": " + strings.Join(fields, "; ")); e == nil {
+						t.Fatal("empty required tag accepted")
+					}
+				})
 			}
-			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value"} {
+			for _, suffix := range []string{"; a=rsa-sha1", "; x-custom=one; x-custom=two", "; malformed", "; =value", ";;", "; ; x=one", "; 1x=one", "; x-y=one", "; x$=one", "; x=" + string([]byte{0xff})} {
 				if e := tc.parse(tc.raw + suffix); e == nil {
 					t.Errorf("invalid suffix %q accepted", suffix)
 				}
 			}
-			if e := tc.parse(tc.raw + "; x-custom=one"); e != nil {
+			if e := tc.parse(strings.Replace(tc.raw, "a=rsa-sha256", "A=rsa-sha256", 1)); e == nil {
+				t.Error("case-distinct unknown A tag replaced required a tag")
+			}
+			if e := tc.parse(tc.raw + "; X=one; x=two"); e != nil {
+				t.Fatalf("case-distinct unknown tags rejected: %v", e)
+			}
+			if e := tc.parse(tc.raw + "; x_custom=one"); e != nil {
 				t.Fatalf("unknown tag rejected: %v", e)
 			}
-			if e := tc.parse(strings.Replace(tc.raw, "b=AAAA", "b=", 1)); e != nil {
-				t.Fatalf("signing placeholder rejected: %v", e)
+			if e := tc.parse(tc.raw + "; x=é"); e != nil {
+				t.Fatalf("RFC 8617 UTF-8 tag value rejected: %v", e)
+			}
+			for _, pair := range [][2]string{{"d=example.com", "d=example .com"}, {"s=s", "s=s s"}} {
+				if e := tc.parse(strings.Replace(tc.raw, pair[0], pair[1], 1)); e == nil {
+					t.Errorf("invalid ARC identifier %q accepted", pair[1])
+				}
 			}
 		})
+	}
+}
+
+func TestARCSignatureRejectsTrailingControlCharacter(t *testing.T) {
+	for _, raw := range []string{
+		"ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h=from; s=s; b=AAAA\v\r\n",
+		"ARC-Seal: i=1; a=rsa-sha256; cv=none; d=example.com; s=s; b=AAAA\v\r\n",
+	} {
+		if strings.HasPrefix(raw, "ARC-Seal:") {
+			if _, err := ParseARCSeal(raw); err == nil {
+				t.Errorf("accepted malformed seal %q", raw)
+			}
+		} else if _, err := ParseARCMessageSignature(raw); err == nil {
+			t.Errorf("accepted malformed message signature %q", raw)
+		}
+	}
+}
+
+func TestRFC8617AMSCanonicalizationTagMustHaveValue(t *testing.T) {
+	const base = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h=from; s=s; b=AAAA"
+	for _, value := range []string{"c=", "c= \t"} {
+		if _, err := ParseARCMessageSignature(base + "; " + value); err == nil {
+			t.Errorf("empty explicit %q accepted", value)
+		}
+	}
+	if _, err := ParseARCMessageSignature(base); err != nil {
+		t.Fatalf("omitted c= must use the default: %v", err)
+	}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", BodyHash: "AAAA"}
+	if err := ams.Sign([]string{"From: a@example.com\r\n"}, testKeys.RSAPrivateKey); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ams.String(), "; c=") {
+		t.Fatalf("default canonicalization was serialized as explicit c=: %s", ams.String())
+	}
+	parsed, err := ParseARCMessageSignature("ARC-Message-Signature: " + ams.String() + "\r\n")
+	if err != nil || parsed.GetCanonicalizationAndAlgorithm().Header != CanonicalizationSimple || parsed.GetCanonicalizationAndAlgorithm().Body != CanonicalizationSimple {
+		t.Fatalf("signed AMS default canonicalization: parsed=%+v error=%v", parsed, err)
+	}
+	key := &domainkey.DomainKey{PublicKey: testKeys.RSAPublicKeyBase64, KeyType: domainkey.KeyTypeRSA}
+	allHeaders := []string{"From: a@example.com\r\n", "ARC-Message-Signature: " + ams.String() + "\r\n"}
+	if result := parsed.Verify(allHeaders, ams.BodyHash, key); result.Status() != VerifyStatusPass {
+		t.Fatalf("signed AMS did not verify with default canonicalization: %s, %v", result.Status(), result.Error())
+	}
+}
+
+func TestRFC8617ARCBase64TagSyntax(t *testing.T) {
+	const ams = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h=From; s=s; b=AAAA"
+	const seal = "ARC-Seal: i=1; a=rsa-sha256; cv=none; d=example.com; s=s; b=AAAA"
+	for _, tc := range []struct {
+		name, input string
+		valid       bool
+	}{
+		{"AMS valid FWS", strings.Replace(ams, "bh=AAAA", "bh=AA\r\n AA", 1), true},
+		{"AMS invalid bh alphabet", strings.Replace(ams, "bh=AAAA", "bh=not_base64", 1), false},
+		{"AMS invalid bh padding", strings.Replace(ams, "bh=AAAA", "bh=AA=A", 1), false},
+		{"AMS empty bh", strings.Replace(ams, "bh=AAAA", "bh=", 1), false},
+		{"AMS empty b", strings.Replace(ams, "b=AAAA", "b=", 1), false},
+		{"AMS invalid b alphabet", strings.Replace(ams, "b=AAAA", "b=AA_A", 1), false},
+		{"seal empty b", strings.Replace(seal, "b=AAAA", "b=", 1), false},
+		{"seal invalid b padding", strings.Replace(seal, "b=AAAA", "b=AA===", 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			if strings.HasPrefix(tc.input, "ARC-Seal:") {
+				_, err = ParseARCSeal(tc.input)
+			} else {
+				_, err = ParseARCMessageSignature(tc.input)
+			}
+			if (err == nil) != tc.valid {
+				t.Fatalf("input=%q error=%v valid=%t", tc.input, err, tc.valid)
+			}
+		})
+	}
+}
+
+func TestRFC8617AMSSignerRequiresValidFromField(t *testing.T) {
+	for _, fields := range [][]string{
+		{"From\u00a0: a@example.com\r\n"},
+		{"From\u00a0: a@example.com\r\n", "Subject: test\r\n"},
+	} {
+		ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", BodyHash: "AAAA"}
+		if err := ams.Sign(fields, testKeys.RSAPrivateKey); err == nil {
+			t.Fatalf("signed without a valid From field: %q", fields)
+		}
+	}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "example.com", Selector: "s", BodyHash: "AAAA"}
+	if err := ams.Sign([]string{"From\u00a0: forged\r\n", "From: real@example.com\r\n"}, testKeys.RSAPrivateKey); err != nil || ams.Headers != "From" {
+		t.Fatalf("valid From was not the sole signed field: h=%q error=%v", ams.Headers, err)
+	}
+}
+
+func TestRFC8617ARCSignedHeaderNamesPreserveInternalWhitespace(t *testing.T) {
+	const prefix = "ARC-Message-Signature: i=1; a=rsa-sha256; bh=AAAA; d=example.com; h="
+	const suffix = "; s=s; b=AAAA\r\n"
+	for _, value := range []string{"From:Bad Name", "Fr om", "From::Subject", "From:é"} {
+		if _, err := ParseARCMessageSignature(prefix + value + suffix); err == nil {
+			t.Errorf("invalid h= value %q accepted", value)
+		}
+	}
+	parsed, err := ParseARCMessageSignature(prefix + "From \r\n : \r\n Subject" + suffix)
+	if err != nil || parsed.Headers != "From:Subject" {
+		t.Fatalf("valid FWS around h= delimiter: parsed=%+v, error=%v", parsed, err)
+	}
+}
+
+func TestRFC8617ARCULabelSigningIdentifiersUseALabelDNS(t *testing.T) {
+	key, domainKey := regressionARCKey(t)
+	oldResolver := domainkey.DefaultResolver
+	t.Cleanup(func() { domainkey.DefaultResolver = oldResolver })
+	lookups := 0
+	domainkey.DefaultResolver = func(name string) ([]string, error) {
+		if name != "xn--bcher-kva._domainkey.xn--bcher-kva.example" {
+			t.Fatalf("unexpected ARC key lookup %q", name)
+		}
+		lookups++
+		return []string{"v=DKIM1; k=ed25519; p=" + domainKey.PublicKey}, nil
+	}
+	const bodyHash = "Ck5SoRNWUpSR4X0COv7R5ub2pUTtl6xz4dTFz++ji4M="
+	headers := []string{"From: a@example.com\r\n"}
+	ams := &ARCMessageSignature{InstanceNumber: 1, Domain: "bücher.example", Selector: "bücher", Canonicalization: "relaxed/relaxed", BodyHash: bodyHash}
+	if err := ams.Sign(headers, key); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Authentication-Results: i=1; example.com; dkim=pass\r\n", "ARC-Message-Signature: "+ams.String()+"\r\n")
+	seal := &ARCSeal{InstanceNumber: 1, Domain: "bücher.example", Selector: "bücher", ChainValidation: ChainValidationResultNone}
+	if err := seal.Sign(headers, key); err != nil {
+		t.Fatal(err)
+	}
+	headers = append(headers, "ARC-Seal: "+seal.String()+"\r\n")
+	chain, err := ParseARCHeaders(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain.GetInstance(1).VerifyWithKeys(headers, bodyHash, nil, nil)
+	if lookups != 2 || chain.GetVerifyResult() != VerifyStatusPass {
+		t.Fatalf("U-label ARC verification: lookups=%d status=%s", lookups, chain.GetVerifyResult())
 	}
 }
 

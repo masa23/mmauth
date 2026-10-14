@@ -22,7 +22,7 @@ func TestHeaderOnlyDKIMVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 	dk := &domainkey.DomainKey{KeyType: domainkey.KeyTypeED25519, PublicKey: base64.StdEncoding.EncodeToString(pub)}
-	headers := []string{"From: a@example.com\r\n", "Subject: header-only message\r\n"}
+	headers := []string{"Date: Mon, 12 Oct 2026 00:00:00 +0000\r\n", "From: a@example.com\r\n", "Subject: header-only message\r\n"}
 	for _, mode := range []Canonicalization{CanonicalizationSimple, CanonicalizationRelaxed} {
 		t.Run(string(mode), func(t *testing.T) {
 			body := ""
@@ -58,6 +58,54 @@ func TestHeaderOnlyDKIMVerification(t *testing.T) {
 	}
 }
 
+// The signature was generated separately from DKIM.Sign with the 00..1f seed,
+// hashing the literal simple-canonicalized header bytes and signing the digest
+// with crypto/ed25519.
+// The message has no header/body separator and no body octets.
+func TestHeaderOnlyDKIMFixedFixture(t *testing.T) {
+	const publicKey = "A6EHv/POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
+	const bodyHash = "frcCV1k9oG9oKj3dpUqdJg1PxRT2RSN/XKdLCPjaYaY="
+	const message = "DKIM-Signature: v=1; a=ed25519-sha256; c=simple/simple; d=example.org; s=sel; h=Date:From:Subject; bh=" + bodyHash + "; b=ydM7GMr+kbp7CqTVyk3tb0NAY3+SWJmYVixjaj1pt6DqP1BEUBBZYWVZfKOZqjFmh323VC1nUcRHEcoRp1ykBA==\r\n" +
+		"Date: Mon, 12 Oct 2026 00:00:00 +0000\r\n" +
+		"From: Alice <alice@example.org>\r\n" +
+		"Subject: Header-only\r\n\tmessage\r\n"
+
+	for _, tc := range []struct {
+		name        string
+		message     string
+		wantSubject string
+		want        dkim.VerifyStatus
+	}{
+		{"valid", message, "Subject: Header-only\r\n\tmessage\r\n", dkim.VerifyStatusPass},
+		{"modified signed header", strings.Replace(message, "Header-only", "Changed", 1), "Subject: Changed\r\n\tmessage\r\n", dkim.VerifyStatusFail},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewMMAuth()
+			if _, err := m.Write([]byte(tc.message)); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if len(m.Headers) != 4 || m.Headers[3] != tc.wantSubject {
+				t.Fatalf("folded header changed: %q", m.Headers)
+			}
+			gotHash := m.GetBodyHash(BodyCanonicalizationAndAlgorithm{Body: CanonicalizationSimple, Algorithm: crypto.SHA256})
+			if gotHash != bodyHash {
+				t.Fatalf("empty body hash=%q, want %q", gotHash, bodyHash)
+			}
+			sigs := *m.AuthenticationHeaders.DKIMSignatures
+			if len(sigs) != 1 {
+				t.Fatalf("DKIM signatures=%d, want 1", len(sigs))
+			}
+			sigs[0].Verify(m.Headers, gotHash, &domainkey.DomainKey{KeyType: domainkey.KeyTypeED25519, PublicKey: publicKey})
+			if got := sigs[0].VerifyResult.Status(); got != tc.want {
+				t.Fatalf("verification=%s, want %s: %v", got, tc.want, sigs[0].VerifyResult.Error())
+			}
+		})
+	}
+}
+
 func TestRegressionSPFIdentity(t *testing.T) {
 	old := spf.DefaultTXTResolver
 	defer func() { spf.DefaultTXTResolver = old }()
@@ -77,7 +125,7 @@ func TestRegressionSPFIdentity(t *testing.T) {
 	}
 	got := m.GetAuthenticationHeader(net.ParseIP("192.0.2.1"), "helo.example.net", "victim@example.com")
 	t.Logf("authentication results: %v", got)
-	if !strings.Contains(got[0], "spf=fail smtp.mailfrom=victim@example.com") {
+	if !strings.Contains(got[0], "spf=fail smtp.mailfrom=example.com") {
 		t.Error("HELO pass attributed to unauthorized MAIL FROM")
 	}
 }
