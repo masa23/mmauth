@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.1.2](https://github.com/masa23/mmauth/compare/v1.1.1...v1.1.2) - 2026-10-14
+
+- RFCに基づくメール認証判定と回帰テストを強化 by @masa23 in https://github.com/masa23/mmauth/pull/34
+
 ## [v1.1.1](https://github.com/masa23/mmauth/compare/v1.1.0...v1.1.1) - 2026-10-04
 
 - 本文と区切り空行のないメールを正常に読み込めるよう修正 by @masa23 in https://github.com/masa23/mmauth/pull/32
