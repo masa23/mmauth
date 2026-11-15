@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+	"github.com/masa23/mmauth/domainkey"
 )
 
 // SignOptions supplies the private key and SMTP envelope for a DKIM2 hop.
@@ -25,6 +28,9 @@ type SignOptions struct {
 	HashAlgorithm string
 	Nonce         string
 	Flags         []string
+	// PolicyResolver supplies Domain Policy Records when a subdomain signs for
+	// the From domain. Nil uses the system resolver.
+	PolicyResolver domainkey.TXTResolver
 	// AllowNullBodyRecipe explicitly allows Revise to use b:null. The caller
 	// must have authenticated the incoming message before changing its body.
 	AllowNullBodyRecipe bool
@@ -39,7 +45,19 @@ func Sign(wire []byte, options SignOptions) ([]byte, error) {
 	if len(m.Instances) != 0 || len(m.Signatures) != 0 {
 		return nil, errors.New("dkim2: message is already signed; use Forward")
 	}
+	options, err = normalizeSignOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateSignOptions(options); err != nil {
+		return nil, err
+	}
+	for _, flag := range options.Flags {
+		if flag == "exploded" {
+			return nil, errors.New("dkim2: initial signature cannot have exploded flag")
+		}
+	}
+	if err := checkAuthenticFrom(m.Headers, options.Domain, options.PolicyResolver); err != nil {
 		return nil, err
 	}
 	algorithm := options.HashAlgorithm
@@ -76,6 +94,10 @@ func Forward(wire []byte, options SignOptions) ([]byte, error) {
 		return nil, err
 	}
 	if err := validateStructure(m); err != nil {
+		return nil, err
+	}
+	options, err = normalizeSignOptions(options)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateSignOptions(options); err != nil {
@@ -118,6 +140,10 @@ func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error)
 	if err := validateStructure(m); err != nil {
 		return nil, err
 	}
+	options, err = normalizeSignOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateSignOptions(options); err != nil {
 		return nil, err
 	}
@@ -129,6 +155,11 @@ func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error)
 	r, err := parseRecipe(encoded)
 	if err != nil {
 		return nil, err
+	}
+	if _, changed := r.Headers["from"]; changed {
+		if err := checkAuthenticFrom(m.Headers, options.Domain, options.PolicyResolver); err != nil {
+			return nil, err
+		}
 	}
 	nullBody := r.NullBody
 	if nullBody {
@@ -219,10 +250,11 @@ func checkForwardDomain(previous Signature, options SignOptions) error {
 		}
 	} else {
 		domain := pathDomain(options.Envelope.MailFrom)
-		if options.NextDomain != "" {
-			domain = options.Domain
+		matches := recipientDomainMatches(previous.Recipients, domain)
+		if options.NextDomain != "" || options.Envelope.MailFrom == "<>" {
+			matches = recipientMatchesSigner(previous.Recipients, options.Domain)
 		}
-		if !recipientDomainMatches(previous.Recipients, domain) {
+		if !matches {
 			return errors.New("dkim2: next signer is not covered by the previous RCPT TO")
 		}
 	}
@@ -257,12 +289,23 @@ func validateSignOptions(o SignOptions) error {
 		return errors.New("dkim2: invalid nonce")
 	}
 	for _, f := range o.Flags {
-		if f == "" || strings.ContainsAny(f, "\r\n;, \t") {
+		if !validTextString(f) {
 			return errors.New("dkim2: invalid flag")
 		}
 	}
 	_, err := keyAlgorithm(o.Key)
 	return err
+}
+
+func normalizeSignOptions(options SignOptions) (SignOptions, error) {
+	if options.NextDomain == "" {
+		envelope, err := normalizeEnvelope(options.Envelope)
+		if err != nil {
+			return options, err
+		}
+		options.Envelope = envelope
+	}
+	return options, nil
 }
 
 func keyAlgorithm(key crypto.Signer) (string, error) {
@@ -280,6 +323,8 @@ func keyAlgorithm(key crypto.Signer) (string, error) {
 			return "", errors.New("dkim2: invalid Ed25519 key")
 		}
 		return "ed25519-sha256", nil
+	case *mldsa44.PublicKey:
+		return "mldsa44", nil
 	default:
 		return "", fmt.Errorf("dkim2: unsupported signing key %T", pub)
 	}
@@ -326,6 +371,13 @@ func makeSignature(instances []Instance, previous []Signature, index int, o Sign
 		signature, err = o.Key.Sign(rand.Reader, hash[:], crypto.SHA256)
 	case "ed25519-sha256":
 		signature, err = o.Key.Sign(rand.Reader, hash[:], crypto.Hash(0))
+	case "mldsa44":
+		private, ok := o.Key.(*mldsa44.PrivateKey)
+		if !ok {
+			return "", errors.New("dkim2: ML-DSA-44 key does not expose context signing")
+		}
+		signature = make([]byte, mldsa44.SignatureSize)
+		err = mldsa44.SignTo(private, input, []byte("DKIM2"), false, signature)
 	}
 	if err != nil {
 		return "", err
@@ -394,15 +446,23 @@ func emptySignatureValues(canonical string) (string, error) {
 				return "", errors.New("dkim2: duplicate s= tag")
 			}
 			found = true
-			sets := strings.Split(part[2:], ",")
-			for j, set := range sets {
-				triplet := strings.Split(set, ":")
-				if len(triplet) != 3 {
-					return "", errors.New("dkim2: malformed s= signature set")
+			var empty strings.Builder
+			for _, group := range strings.Split(part[2:], "|") {
+				if empty.Len() > 0 {
+					empty.WriteByte('|')
 				}
-				sets[j] = triplet[0] + ":" + triplet[1] + ":"
+				for j, set := range strings.Split(group, ",") {
+					if j > 0 {
+						empty.WriteByte(',')
+					}
+					triplet := strings.Split(set, ":")
+					if len(triplet) != 3 {
+						return "", errors.New("dkim2: malformed s= signature set")
+					}
+					empty.WriteString(triplet[0] + ":" + triplet[1] + ":")
+				}
 			}
-			parts[i] = part[:2] + strings.Join(sets, ",")
+			parts[i] = part[:2] + empty.String()
 		}
 	}
 	if !found {

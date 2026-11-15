@@ -1,19 +1,17 @@
 package dkim2
 
 import (
-	"context"
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 	"github.com/masa23/mmauth/domainkey"
 )
 
@@ -32,7 +30,8 @@ const (
 type Result struct {
 	Status Status
 	Err    error
-	// Testing means at least one key had t=y. Such mail is reported as None.
+	// Testing is retained for API compatibility and is always false; DNS t=y
+	// is ignored by DKIM2 under the current DNS draft.
 	Testing bool
 	// UnverifiedBodies lists preceding instances whose body could not be
 	// reconstructed because a later Message-Instance used a null body Recipe.
@@ -40,6 +39,10 @@ type Result struct {
 	// ReplayID identifies the first signed message instance after successful
 	// cryptographic verification. It is empty for unauthenticated results.
 	ReplayID string
+	// ReplayDetected and ReplayErr report local replay-policy observations.
+	// They do not change the DKIM2 authentication status.
+	ReplayDetected bool
+	ReplayErr      error
 }
 
 // VerifyOptions selects a DNS resolver and evaluation time. By default it
@@ -47,14 +50,16 @@ type Result struct {
 type VerifyOptions struct {
 	Resolver domainkey.TXTResolver
 	Now      time.Time
-	// ValidateNextDomain must confirm an out-of-band arrangement when the
-	// highest signature uses nd= and therefore has no signed SMTP paths.
+	// ValidateNextDomain may confirm an out-of-band arrangement for a highest
+	// nd= signature. Such a message remains not fully verified until another
+	// signature records mf= and rt=.
 	ValidateNextDomain func(Signature, Envelope) error
-	// AllowPartialBody permits verification across a null body Recipe. The
-	// result lists every body instance that could not be authenticated.
+	// AllowPartialBody continues checking headers across a null body Recipe.
+	// The result remains PermError and lists bodies that were not authenticated.
 	AllowPartialBody bool
 	// ReplayCheck atomically checks and records a ReplayID. It returns true if
-	// this message was already seen. It is skipped for exploded or testing mail.
+	// this message was already seen. It is skipped for exploded mail. The
+	// outcome is reported separately from DKIM2 authentication.
 	ReplayCheck func(string) (bool, error)
 }
 
@@ -78,23 +83,21 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 	if resolver == nil {
 		resolver = domainkey.NewDefaultTXTResolver()
 	}
-	testing := false
 	var unverifiedBodies []int
 	replayID := ""
+	var replayDetected bool
+	var replayErr error
 	finish := func(status Status, err error) Result {
-		if testing && status != TempError {
-			status = None
-		}
-		return Result{Status: status, Err: err, Testing: testing, UnverifiedBodies: append([]int(nil), unverifiedBodies...), ReplayID: replayID}
+		return Result{Status: status, Err: err, UnverifiedBodies: append([]int(nil), unverifiedBodies...), ReplayID: replayID, ReplayDetected: replayDetected, ReplayErr: replayErr}
 	}
 	for i, sig := range m.Signatures {
-		if sig.Timestamp > now.Unix() || now.Unix()-sig.Timestamp > 14*24*60*60 {
-			return finish(PermError, fmt.Errorf("dkim2: signature i=%d is outside the 14-day time window", sig.Index))
+		if sig.Timestamp > now.Unix()+24*60*60 || now.Unix()-sig.Timestamp > 14*24*60*60 {
+			return finish(Fail, fmt.Errorf("dkim2: signature i=%d is outside the time window", sig.Index))
 		}
-		if err := checkSignature(m.Instances, m.Signatures[:i], sig, resolver, &testing); err != nil {
-			var testError *testingFailure
-			if errors.As(err, &testError) {
-				return finish(None, err)
+		if err := checkSignature(m.Instances, m.Signatures[:i], sig, resolver); err != nil {
+			var statusErr *statusError
+			if errors.As(err, &statusErr) {
+				return finish(statusErr.status, err)
 			}
 			var dnsError *temporaryDNSError
 			if errors.As(err, &dnsError) {
@@ -108,27 +111,45 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 		}
 	}
 	if err := checkEnvelope(envelope, m.Signatures, options.ValidateNextDomain); err != nil {
-		if testing {
-			return finish(None, err)
-		}
-		return finish(PermError, err)
+		return finish(Fail, err)
 	}
 	state := m
 	bodyKnown := true
 	for i := len(m.Instances) - 1; i >= 0; i-- {
 		if err := checkInstanceHashWithBody(state, m.Instances[i], bodyKnown); err != nil {
-			if testing {
-				return finish(None, err)
+			var statusErr *statusError
+			if errors.As(err, &statusErr) {
+				return finish(statusErr.status, err)
 			}
 			return finish(Fail, err)
 		}
 		if !bodyKnown {
 			unverifiedBodies = append(unverifiedBodies, m.Instances[i].Number)
 		}
-		if i > 0 {
+		if i == 0 {
+			if m.Instances[i].Recipe != "" {
+				if _, err := parseRecipe(m.Instances[i].Recipe); err != nil {
+					return finish(PermError, err)
+				}
+			}
+			if err := checkAuthenticFrom(state.Headers, m.Signatures[0].Domain, resolver); err != nil {
+				return finish(fromErrorStatus(err), err)
+			}
+		}
+		if i > 0 && m.Instances[i].Recipe != "" {
 			r, err := parseRecipe(m.Instances[i].Recipe)
 			if err != nil {
 				return finish(PermError, err)
+			}
+			if _, changed := r.Headers["from"]; changed {
+				for _, sig := range m.Signatures {
+					if sig.Instance >= m.Instances[i].Number {
+						if err := checkAuthenticFrom(state.Headers, sig.Domain, resolver); err != nil {
+							return finish(fromErrorStatus(err), err)
+						}
+						break
+					}
+				}
 			}
 			if r.NullBody {
 				if !options.AllowPartialBody {
@@ -146,58 +167,41 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 			}
 		}
 	}
-	for i, sig := range m.Signatures {
-		for _, prior := range m.Signatures[:i] {
-			if hasFlag(prior.Flags, "donotmodify") && sig.Instance > prior.Instance {
-				err := fmt.Errorf("dkim2: message changed after donotmodify in signature i=%d", prior.Index)
-				if testing {
-					return finish(None, err)
-				}
-				return finish(Fail, err)
-			}
-			if hasFlag(prior.Flags, "donotexplode") && hasFlag(sig.Flags, "exploded") {
-				err := fmt.Errorf("dkim2: message exploded after donotexplode in signature i=%d", prior.Index)
-				if testing {
-					return finish(None, err)
-				}
-				return finish(Fail, err)
+	sort.Ints(unverifiedBodies)
+	if len(unverifiedBodies) > 0 {
+		return finish(PermError, errors.New("dkim2: null body Recipe prevents full verification"))
+	}
+	replayID = firstInstanceReplayID(state, m.Instances[0])
+	if options.ReplayCheck != nil {
+		exploded := false
+		for _, sig := range m.Signatures {
+			if hasFlag(sig.Flags, "exploded") {
+				exploded = true
+				break
 			}
 		}
-	}
-	sort.Ints(unverifiedBodies)
-	if !testing {
-		replayID = firstInstanceReplayID(m.Instances[0])
-		if options.ReplayCheck != nil {
-			exploded := false
-			for _, sig := range m.Signatures {
-				if hasFlag(sig.Flags, "exploded") {
-					exploded = true
-					break
-				}
-			}
-			if !exploded {
-				duplicate, err := options.ReplayCheck(replayID)
-				if err != nil {
-					return finish(TempError, fmt.Errorf("dkim2: replay check failed: %w", err))
-				}
-				if duplicate {
-					return finish(Fail, errors.New("dkim2: unexpected replay"))
-				}
-			}
+		if !exploded {
+			replayDetected, replayErr = options.ReplayCheck(replayID)
 		}
 	}
 	return finish(Pass, nil)
 }
 
-func firstInstanceReplayID(inst Instance) string {
-	for _, algorithm := range []string{"sha256", "sha512"} {
-		for _, h := range inst.Hashes {
-			if h.Algorithm == algorithm {
-				return algorithm + ":" + h.Header + ":" + h.Body
+func firstInstanceReplayID(state *Message, inst Instance) string {
+	groups := inst.HashGroups
+	if len(groups) == 0 {
+		groups = [][]HashSet{inst.Hashes}
+	}
+	for _, group := range groups {
+		if checkInstanceHashWithBody(state, Instance{Number: inst.Number, Hashes: group}, true) == nil {
+			for _, hash := range group {
+				if hash.Algorithm == "sha256" || hash.Algorithm == "sha512" {
+					return hash.Algorithm + ":" + hash.Header + ":" + hash.Body
+				}
 			}
 		}
 	}
-	return "" // A successful verification always has a supported hash.
+	return "" // Successful full verification has a passing supported group.
 }
 
 func hasFlag(flags []string, want string) bool {
@@ -214,33 +218,65 @@ func checkInstanceHash(m *Message, inst Instance) error {
 }
 
 func checkInstanceHashWithBody(m *Message, inst Instance, checkBody bool) error {
-	checked := 0
-	for _, h := range inst.Hashes {
-		if h.Algorithm != "sha256" && h.Algorithm != "sha512" {
-			continue
-		}
-		checked++
-		hh, err := headerDigest(m.Headers, h.Algorithm)
-		if err != nil {
-			return err
-		}
-		if hh != h.Header {
-			return fmt.Errorf("dkim2: Message-Instance m=%d %s header hash mismatch", inst.Number, h.Algorithm)
-		}
-		if checkBody {
-			bh, err := bodyDigest(m.Body, h.Algorithm)
-			if err != nil {
-				return err
+	groups := inst.HashGroups
+	if len(groups) == 0 {
+		groups = [][]HashSet{inst.Hashes}
+	}
+	overall := PermError
+	var chosenErr error
+	for _, group := range groups {
+		groupStatus := Pass
+		groupErrors := make(map[Status]error)
+		for _, h := range group {
+			status := Pass
+			var err error
+			if h.Algorithm != "sha256" && h.Algorithm != "sha512" {
+				status, err = PermError, fmt.Errorf("dkim2: Message-Instance m=%d algorithm %s unknown", inst.Number, h.Algorithm)
+			} else {
+				var hh string
+				hh, err = headerDigest(m.Headers, h.Algorithm)
+				if err != nil {
+					status = PermError
+				}
+				if err == nil && hh != h.Header {
+					status, err = Fail, fmt.Errorf("dkim2: Message-Instance m=%d %s header hash mismatch", inst.Number, h.Algorithm)
+				}
+				if err == nil && checkBody {
+					var bh string
+					bh, err = bodyDigest(m.Body, h.Algorithm)
+					if err != nil {
+						status = PermError
+					}
+					if err == nil && bh != h.Body {
+						status, err = Fail, fmt.Errorf("dkim2: Message-Instance m=%d %s body hash mismatch", inst.Number, h.Algorithm)
+					}
+				}
 			}
-			if bh != h.Body {
-				return fmt.Errorf("dkim2: Message-Instance m=%d %s body hash mismatch", inst.Number, h.Algorithm)
+			if err != nil && groupErrors[status] == nil {
+				groupErrors[status] = err
 			}
+			if status == Fail {
+				groupStatus = Fail
+			} else if status == PermError && groupStatus == Pass {
+				groupStatus = PermError
+			}
+		}
+		if groupStatus == Pass {
+			return nil
+		}
+		if groupStatus == Fail {
+			if overall != Fail {
+				chosenErr = groupErrors[Fail]
+			}
+			overall = Fail
+		} else if overall == PermError && chosenErr == nil {
+			chosenErr = groupErrors[PermError]
 		}
 	}
-	if checked == 0 {
-		return errors.New("dkim2: no supported Message-Instance hash")
+	if chosenErr == nil {
+		chosenErr = fmt.Errorf("dkim2: Message-Instance m=%d no group of hashes passed", inst.Number)
 	}
-	return nil
+	return &statusError{overall, chosenErr}
 }
 
 func recipientDomainMatches(recipients []string, mailFromDomain string) bool {
@@ -249,6 +285,15 @@ func recipientDomainMatches(recipients []string, mailFromDomain string) bool {
 	}
 	for _, p := range recipients {
 		if domainMatch(mailFromDomain, pathDomain(p)) {
+			return true
+		}
+	}
+	return false
+}
+
+func recipientMatchesSigner(recipients []string, signingDomain string) bool {
+	for _, path := range recipients {
+		if domainMatch(pathDomain(path), signingDomain) {
 			return true
 		}
 	}
@@ -276,6 +321,11 @@ func normalizedPath(p string) string {
 }
 
 func checkEnvelope(envelope Envelope, signatures []Signature, validateNextDomain func(Signature, Envelope) error) error {
+	var err error
+	envelope, err = normalizeEnvelope(envelope)
+	if err != nil {
+		return err
+	}
 	if !validPath(envelope.MailFrom, true) || len(envelope.RcptTo) == 0 {
 		return errors.New("dkim2: actual SMTP envelope is missing or invalid")
 	}
@@ -323,9 +373,18 @@ func checkEnvelope(envelope Envelope, signatures []Signature, validateNextDomain
 		if sig.NextDomain != "" {
 			custodyDomain = sig.Domain
 		}
-		if i > 0 && signatures[i-1].NextDomain == "" && !recipientDomainMatches(signatures[i-1].Recipients, custodyDomain) {
-			return fmt.Errorf("dkim2: broken chain of custody at signature i=%d", sig.Index)
+		if i > 0 && signatures[i-1].NextDomain == "" {
+			matches := recipientDomainMatches(signatures[i-1].Recipients, custodyDomain)
+			if sig.NextDomain != "" || sig.MailFrom == "<>" {
+				matches = recipientMatchesSigner(signatures[i-1].Recipients, sig.Domain)
+			}
+			if !matches {
+				return fmt.Errorf("dkim2: broken chain of custody at signature i=%d", sig.Index)
+			}
 		}
+	}
+	if latest.NextDomain != "" {
+		return errors.New("dkim2: highest nd= cannot be fully verified before the next signature")
 	}
 	return nil
 }
@@ -340,142 +399,113 @@ type permanentKeyError struct{ err error }
 func (e *permanentKeyError) Error() string { return e.err.Error() }
 func (e *permanentKeyError) Unwrap() error { return e.err }
 
-type testingFailure struct{ err error }
-
-func (e *testingFailure) Error() string { return e.err.Error() }
-func (e *testingFailure) Unwrap() error { return e.err }
-
 type keyData struct {
-	public  interface{}
-	testing bool
+	public interface{}
 }
 
-func lookupKey(resolver domainkey.TXTResolver, domain, selector, algorithm string) (interface{}, error) {
-	name := selector + "._domainkey." + domain
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	records, err := resolver.LookupTXT(ctx, name)
-	if err != nil {
-		var dnsErr *net.DNSError
-		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
-			return nil, &permanentKeyError{fmt.Errorf("dkim2: key %s does not exist: %w", name, err)}
-		}
-		return nil, &temporaryDNSError{fmt.Errorf("dkim2: key %s lookup failed: %w", name, err)}
-	}
-	if len(records) != 1 {
-		return nil, &permanentKeyError{fmt.Errorf("dkim2: key %s has %d TXT records", name, len(records))}
-	}
-	raw := records[0]
-	seen := make(map[string]bool)
-	keyType := "rsa" // The DNS key draft defaults k= to rsa only when absent.
-	for index, part := range strings.Split(raw, ";") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		k, value, ok := strings.Cut(part, "=")
-		k = strings.ToLower(strings.TrimSpace(k))
-		if !ok || k == "" || seen[k] {
-			return nil, &permanentKeyError{errors.New("dkim2: malformed or duplicate key tag")}
-		}
-		seen[k] = true
-		if k == "k" {
-			keyType = strings.TrimSpace(value)
-			if keyType != "rsa" && keyType != "ed25519" {
-				return nil, &permanentKeyError{fmt.Errorf("dkim2: unsupported key type %q", keyType)}
-			}
-		}
-		if k == "v" && index != 0 {
-			return nil, &permanentKeyError{errors.New("dkim2: v= is not the first key tag")}
-		}
-	}
-	if !seen["p"] {
-		return nil, &permanentKeyError{errors.New("dkim2: missing p= key tag")}
-	}
-	key, err := domainkey.ParseDomainKeyRecord(raw)
-	if err != nil {
-		return nil, &permanentKeyError{err}
-	}
-	if key.Version != "" && key.Version != "DKIM1" {
-		return nil, &permanentKeyError{errors.New("dkim2: invalid key version")}
-	}
-	if key.PublicKey == "" {
-		return nil, &permanentKeyError{errors.New("dkim2: revoked key")}
-	}
-	// The s= service tag is retired by the DKIM2 key draft.
-	if algorithm == "rsa-sha256" && keyType != "rsa" {
-		return nil, &permanentKeyError{errors.New("dkim2: key algorithm mismatch")}
-	}
-	if algorithm == "ed25519-sha256" && keyType != "ed25519" {
-		return nil, &permanentKeyError{errors.New("dkim2: key algorithm mismatch")}
-	}
-	decoded, err := b64(key.PublicKey)
-	if err != nil {
-		return nil, &permanentKeyError{fmt.Errorf("dkim2: invalid public key base64: %w", err)}
-	}
-	if keyType == "ed25519" {
-		if len(decoded) != ed25519.PublicKeySize {
-			return nil, &permanentKeyError{errors.New("dkim2: invalid Ed25519 public key length")}
-		}
-		return keyData{ed25519.PublicKey(decoded), key.IsTestFlag()}, nil
-	}
-	pub, err := x509.ParsePKCS1PublicKey(decoded)
-	if err != nil {
-		return nil, &permanentKeyError{fmt.Errorf("dkim2: invalid PKCS#1 RSA public key: %w", err)}
-	}
-	return keyData{pub, key.IsTestFlag()}, nil
+type statusError struct {
+	status Status
+	err    error
 }
 
-func checkSignature(instances []Instance, previous []Signature, sig Signature, resolver domainkey.TXTResolver, testing *bool) error {
+func (e *statusError) Error() string { return e.err.Error() }
+func (e *statusError) Unwrap() error { return e.err }
+
+func combinedSignatureStatus(all []Status) Status {
+	hasTemp, hasPerm := false, false
+	for _, status := range all {
+		if status == Fail {
+			return Fail
+		}
+		if status == TempError {
+			hasTemp = true
+		}
+		if status == PermError {
+			hasPerm = true
+		}
+	}
+	if hasPerm {
+		return PermError
+	}
+	if hasTemp {
+		return TempError
+	}
+	return Pass
+}
+
+func checkSignature(instances []Instance, previous []Signature, sig Signature, resolver domainkey.TXTResolver) error {
 	input, err := signatureInput(instances[:sig.Instance], previous, sig.Raw)
 	if err != nil {
 		return err
 	}
 	hash := sha256.Sum256(input)
-	checked := 0
-	for _, v := range sig.Values {
-		if v.Algorithm != "rsa-sha256" && v.Algorithm != "ed25519-sha256" {
-			continue
-		}
-		checked++
-		found, err := lookupKey(resolver, sig.Domain, v.Selector, v.Algorithm)
-		if err != nil {
-			return err
-		}
-		key := found.(keyData)
-		if key.testing {
-			*testing = true
-		}
-		decoded, err := b64(v.Value)
-		if err != nil {
-			return err
-		}
-		switch v.Algorithm {
-		case "rsa-sha256":
-			pub, ok := key.public.(*rsa.PublicKey)
-			if !ok || pub.N.BitLen() < 1024 || pub.E != 65537 {
-				return &permanentKeyError{errors.New("dkim2: invalid RSA verification key")}
+	groups := sig.ValueGroups
+	if len(groups) == 0 {
+		groups = [][]SignatureValue{sig.Values}
+	}
+	overall := PermError
+	var chosenErr error
+	for _, group := range groups {
+		var statuses []Status
+		groupErrors := make(map[Status]error)
+		for _, value := range group {
+			status, err := checkOneSignature(input, hash[:], sig, value, resolver)
+			statuses = append(statuses, status)
+			if err != nil && groupErrors[status] == nil {
+				groupErrors[status] = err
 			}
-			if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hash[:], decoded); err != nil {
-				failure := fmt.Errorf("dkim2: signature i=%d selector %s failed: %w", sig.Index, v.Selector, err)
-				if key.testing {
-					return &testingFailure{failure}
-				}
-				return failure
-			}
-		case "ed25519-sha256":
-			pub, ok := key.public.(ed25519.PublicKey)
-			if !ok || !ed25519.Verify(pub, hash[:], decoded) {
-				failure := fmt.Errorf("dkim2: signature i=%d selector %s failed", sig.Index, v.Selector)
-				if key.testing {
-					return &testingFailure{failure}
-				}
-				return failure
-			}
+		}
+		status := combinedSignatureStatus(statuses)
+		if status == Pass {
+			return nil
+		}
+		if status == TempError || status == Fail && overall == PermError {
+			overall = status
+			chosenErr = groupErrors[status]
+		} else if chosenErr == nil && status == overall {
+			chosenErr = groupErrors[status]
 		}
 	}
-	if checked == 0 {
-		return &permanentKeyError{errors.New("dkim2: no supported signature algorithm")}
+	if chosenErr == nil {
+		chosenErr = fmt.Errorf("dkim2: DKIM2-Signature i=%d no group of signatures passed", sig.Index)
 	}
-	return nil
+	return &statusError{overall, chosenErr}
+}
+
+func checkOneSignature(input, hash []byte, sig Signature, value SignatureValue, resolver domainkey.TXTResolver) (Status, error) {
+	switch value.Algorithm {
+	case "rsa-sha256", "ed25519-sha256", "mldsa44":
+	default:
+		return PermError, fmt.Errorf("dkim2: DKIM2-Signature i=%d selector %s algorithm unknown", sig.Index, value.Selector)
+	}
+	key, err := lookupKey(resolver, sig.Domain, value.Selector, value.Algorithm)
+	if err != nil {
+		var temporary *temporaryDNSError
+		if errors.As(err, &temporary) {
+			return TempError, err
+		}
+		return PermError, err
+	}
+	decoded, err := b64(value.Value)
+	if err != nil {
+		return PermError, err
+	}
+	valid := false
+	switch value.Algorithm {
+	case "rsa-sha256":
+		pub, ok := key.public.(*rsa.PublicKey)
+		if ok && pub.E == 65537 {
+			valid = rsa.VerifyPKCS1v15(pub, crypto.SHA256, hash, decoded) == nil
+		}
+	case "ed25519-sha256":
+		pub, ok := key.public.(ed25519.PublicKey)
+		valid = ok && ed25519.Verify(pub, hash, decoded)
+	case "mldsa44":
+		pub, ok := key.public.(*mldsa44.PublicKey)
+		valid = ok && mldsa44.Verify(pub, input, []byte("DKIM2"), decoded)
+	}
+	if !valid {
+		return Fail, fmt.Errorf("dkim2: DKIM2-Signature i=%d selector %s incorrect signature", sig.Index, value.Selector)
+	}
+	return Pass, nil
 }

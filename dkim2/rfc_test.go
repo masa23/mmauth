@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// draft-ietf-dkim-dkim2-spec-06, sections 4 and 6.2: field names are
+// draft-ietf-dkim-dkim2-spec-09, sections 4 and 6.2: field names are
 // alphabetized, repeated fields are read bottom-up, and trace fields are
 // excluded. The expected octets are written independently of headerDigest.
 func TestDraftHeaderCanonicalization(t *testing.T) {
@@ -33,7 +33,7 @@ func TestDraftHeaderCanonicalization(t *testing.T) {
 	if got != base64.StdEncoding.EncodeToString(want[:]) {
 		t.Fatalf("header digest = %s, want digest of %q", got, wantBytes)
 	}
-	for _, field := range []string{"Apparently-To", "ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal", "Authentication-Results", "Auto-Submitted", "Delivered-To", "DL-Expansion-History", "Original-Recipient", "Return-Path", "SIO-Label-History", "VBR-Info", "X400-Received", "X400-Trace"} {
+	for _, field := range []string{"Apparently-To", "ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal", "Authentication-Results", "Delivered-To", "DL-Expansion-History", "Original-Recipient", "Return-Path", "SIO-Label-History", "X400-Received", "X400-Trace"} {
 		t.Run(field, func(t *testing.T) {
 			withTrace := append(append([]string(nil), headers...), field+": new trace\r\n")
 			got, err := headerDigest(withTrace, "sha256")
@@ -45,6 +45,12 @@ func TestDraftHeaderCanonicalization(t *testing.T) {
 	changed := append(append([]string(nil), headers...), "Comments: signed\r\n")
 	if got, err := headerDigest(changed, "sha256"); err != nil || got == base64.StdEncoding.EncodeToString(want[:]) {
 		t.Fatalf("new signed field did not change digest: %s, %v", got, err)
+	}
+	for _, field := range []string{"Auto-Submitted", "VBR-Info"} {
+		changed := append(append([]string(nil), headers...), field+": now signed\r\n")
+		if got, err := headerDigest(changed, "sha256"); err != nil || got == base64.StdEncoding.EncodeToString(want[:]) {
+			t.Fatalf("newly signed %s did not change digest: %s, %v", field, got, err)
+		}
 	}
 }
 
@@ -69,7 +75,7 @@ func TestDraftBodyCanonicalization(t *testing.T) {
 	}
 }
 
-// Sections 7, 8 and 11.2 require strict tag and sequence validation.
+// Sections 8, 9, 10 and 14.2 require strict tag and sequence validation.
 func TestDraftMalformedTagsAndSequences(t *testing.T) {
 	key := edKey()
 	env := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
@@ -95,14 +101,14 @@ func TestDraftMalformedTagsAndSequences(t *testing.T) {
 		{"instance gap", func(w []byte) []byte { return bytes.Replace(w, mi, []byte("Message-Instance: m=2;"), 1) }},
 		{"signature gap", func(w []byte) []byte { return bytes.Replace(w, sig, []byte("DKIM2-Signature: i=2;"), 1) }},
 		{"duplicate instance tag", func(w []byte) []byte { return bytes.Replace(w, mi, []byte("Message-Instance: m=1; M=1;"), 1) }},
+		{"empty tag between semicolons", func(w []byte) []byte { return bytes.Replace(w, mi, []byte("Message-Instance: m=1;;"), 1) }},
+		{"empty recipe", func(w []byte) []byte { return bytes.Replace(w, mi, []byte("Message-Instance: m=1; r=;"), 1) }},
 		{"duplicate signature tag", func(w []byte) []byte { return bytes.Replace(w, sig, []byte("DKIM2-Signature: i=1; I=1;"), 1) }},
+		{"empty flags", func(w []byte) []byte { return bytes.Replace(w, sig, []byte("DKIM2-Signature: i=1; f=;"), 1) }},
 		{"invalid nonce", func(w []byte) []byte {
 			return bytes.Replace(w, []byte(";\r\n\ts=s1:"), []byte(";\r\n\tn="+strings.Repeat("x", 65)+";\r\n\ts=s1:"), 1)
 		}},
 		{"duplicate selector", func(w []byte) []byte { return bytes.Replace(w, []byte("s=s1:"), []byte("s=s1:future:,s1:"), 1) }},
-		{"three selectors for one algorithm", func(w []byte) []byte {
-			return bytes.Replace(w, []byte("s=s1:"), []byte("s=a:future:,b:future:,c:future:,s1:"), 1)
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := tc.mutate(wire)
@@ -152,7 +158,7 @@ func removeField(wire []byte, name string) []byte {
 	return bytes.Join(out, []byte("\r\n"))
 }
 
-// Sections 11.3 and 11.4 define a 14-day age limit and exact SMTP path
+// Sections 14.3 and 14.4 define a 14-day age limit and exact SMTP path
 // matching, except that domain labels are compared without case.
 func TestDraftTimeAndEnvelopeBoundaries(t *testing.T) {
 	key := edKey()
@@ -169,11 +175,12 @@ func TestDraftTimeAndEnvelopeBoundaries(t *testing.T) {
 		want Status
 	}{
 		{"exact 14 days", Envelope{"<Alice@example.com>", []string{"<Bob@relay.test>"}}, testTime.Add(14 * 24 * time.Hour), Pass},
-		{"expired by one second", env, testTime.Add(14*24*time.Hour + time.Second), PermError},
-		{"future timestamp", env, testTime.Add(-time.Second), PermError},
-		{"MAIL FROM local part case", Envelope{"<alice@example.com>", env.RcptTo}, testTime, PermError},
-		{"RCPT TO local part case", Envelope{env.MailFrom, []string{"<bob@relay.test>"}}, testTime, PermError},
-		{"unrecorded recipient", Envelope{env.MailFrom, []string{"<other@relay.test>"}}, testTime, PermError},
+		{"expired by one second", env, testTime.Add(14*24*time.Hour + time.Second), Fail},
+		{"future within one day", env, testTime.Add(-time.Second), Pass},
+		{"future beyond one day", env, testTime.Add(-24*time.Hour - time.Second), Fail},
+		{"MAIL FROM local part case", Envelope{"<alice@example.com>", env.RcptTo}, testTime, Fail},
+		{"RCPT TO local part case", Envelope{env.MailFrom, []string{"<bob@relay.test>"}}, testTime, Fail},
+		{"unrecorded recipient", Envelope{env.MailFrom, []string{"<other@relay.test>"}}, testTime, Fail},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Verify(wire, tc.env, VerifyOptions{Resolver: resolver, Now: tc.now})
@@ -184,8 +191,8 @@ func TestDraftTimeAndEnvelopeBoundaries(t *testing.T) {
 	}
 }
 
-// Section 11.5 and the DKIM2 keys draft require malformed and revoked DNS
-// keys to fail permanently. The retired h= and s= restrictions have no effect.
+// Section 14.5 and the DKIM2 DNS draft require malformed and revoked DNS
+// keys to fail permanently. The retired h=, n=, s= and t= tags have no effect.
 func TestDraftDNSKeyRules(t *testing.T) {
 	key := edKey()
 	env := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
@@ -216,15 +223,17 @@ func TestDraftDNSKeyRules(t *testing.T) {
 			}
 		})
 	}
+	if got := Verify(wire, env, VerifyOptions{Resolver: records{"s1._domainkey.example.com": {"v=DKIM3; k=ed25519; p=ignored", valid}}, Now: testTime}); got.Status != Pass {
+		t.Fatalf("unrelated TXT version affected key selection: %s, %v", got.Status, got.Err)
+	}
 }
 
 // Section 5 numbers equal-named headers bottom-up and body lines top-down.
 // This vector also checks that copy and data steps retain their stated order.
 func TestDraftRecipeOrderingAndSyntax(t *testing.T) {
-	// Section 5.1 says Recipes for unsigned fields SHOULD NOT be supplied,
-	// so their presence is discouraged but is not a syntax error.
-	if _, err := parseRecipe(base64.StdEncoding.EncodeToString([]byte(`{"h":{"received":[]}}`))); err != nil {
-		t.Fatalf("Recipe for an unsigned field was rejected: %v", err)
+	// Section 5.1 now forbids Recipes for unsigned fields.
+	if _, err := parseRecipe(base64.StdEncoding.EncodeToString([]byte(`{"h":{"received":[]}}`))); err == nil {
+		t.Fatal("Recipe for an unsigned field was accepted")
 	}
 	m, err := Parse([]byte("From: a@example.com\r\nSubject: top\r\nSubject: bottom\r\n\r\none\r\ntwo\r\nthree\r\n"))
 	if err != nil {
@@ -269,52 +278,51 @@ func TestDraftRecipeOrderingAndSyntax(t *testing.T) {
 	}
 }
 
-// Section 11.8 requires a verifier to reject later changes or explosion when
-// the earlier signer requested otherwise.
-func TestDraftDoNotFlagsAcrossHops(t *testing.T) {
-	key := edKey()
-	in := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
-	out := Envelope{"<bounce@relay.test>", []string{"<carol@example.net>"}}
-	resolver := records{"s1._domainkey.example.com": {keyRecord(key)}, "s2._domainkey.relay.test": {keyRecord(key)}}
-	verify := func(wire []byte, want Status) {
-		t.Helper()
-		got := Verify(wire, out, VerifyOptions{Resolver: resolver, Now: testTime.Add(time.Hour)})
-		if got.Status != want {
-			t.Fatalf("status = %s, want %s: %v", got.Status, want, got.Err)
+func TestDraft09RecipeByteDataAndDuplicateKeys(t *testing.T) {
+	m, err := Parse([]byte("From: a@example.com\r\nSubject: now\r\n\r\nnow\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(`{"h":{"subject":[{"u":["/w=="]}]} ,"b":[{"u":["/g=="]}]}`))
+	r, err := parseRecipe(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, err := applyRecipe(m, r)
+	if err != nil || string(previous.Body) != "\xfe\r\n" {
+		t.Fatalf("binary body reconstruction=%q: %v", previous.Body, err)
+	}
+	if !bytes.Contains([]byte(strings.Join(previous.Headers, "")), []byte{'s', 'u', 'b', 'j', 'e', 'c', 't', ':', 0xff}) {
+		t.Fatalf("binary header reconstruction=%q", previous.Headers)
+	}
+	for _, value := range []string{
+		`{"h":{"subject":[],"subject":[]}}`,
+		`{"H":{},"b":[]}`,
+		`{"b":[{"u":["/w=="],"u":["/g=="]}]}`,
+		`{"b":[{"u":["/w==\n"]}]}`,
+		`{"b":[{"u":["Cg=="]}]}`,
+	} {
+		if _, err := parseRecipe(base64.StdEncoding.EncodeToString([]byte(value))); err == nil {
+			t.Fatalf("invalid Recipe accepted: %s", value)
 		}
 	}
-	for _, tc := range []struct {
-		name, initialFlag, nextFlag string
-		revise                      bool
-	}{
-		{"exploded after donotexplode", "donotexplode", "exploded", false},
-		{"modified after donotmodify", "donotmodify", "", true},
-		{"unknown flag ignored", "futureflag", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			initial, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: in, Timestamp: testTime, Flags: []string{tc.initialFlag}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			options := SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime.Add(time.Minute)}
-			if tc.nextFlag != "" {
-				options.Flags = []string{tc.nextFlag}
-			}
-			var next []byte
-			if tc.revise {
-				modified := append(append([]byte(nil), initial...), []byte("footer\r\n")...)
-				next, err = Revise(modified, []byte(`{"b":[{"c":[1,1]}]}`), options)
-			} else {
-				next, err = Forward(initial, options)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := Fail
-			if tc.name == "unknown flag ignored" {
-				want = Pass
-			}
-			verify(next, want)
-		})
+}
+
+// Sections 10.10 and 12.5 treat retired flags as unknown and forbid exploded
+// on the first signature.
+func TestDraftFlagRules(t *testing.T) {
+	key := edKey()
+	env := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
+	for _, flag := range []string{"donotmodify", "donotexplode", "futureflag"} {
+		wire, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: env, Timestamp: testTime, Flags: []string{flag}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := Verify(wire, env, VerifyOptions{Resolver: records{"s1._domainkey.example.com": {keyRecord(key)}}, Now: testTime}); got.Status != Pass {
+			t.Fatalf("unknown flag %s: %s, %v", flag, got.Status, got.Err)
+		}
+	}
+	if _, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: env, Timestamp: testTime, Flags: []string{"exploded"}}); err == nil {
+		t.Fatal("initial exploded flag accepted")
 	}
 }

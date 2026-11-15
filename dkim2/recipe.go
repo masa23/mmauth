@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
+	"unicode/utf8"
 )
 
 // A Recipe transforms the current message into its previous instance.
@@ -26,6 +28,16 @@ func parseRecipe(encoded string) (recipe, error) {
 	if err != nil {
 		return recipe{}, err
 	}
+	if !utf8.Valid(decoded) {
+		return recipe{}, errors.New("dkim2: Recipe JSON is not UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(decoded))
+	if err := checkUniqueJSONValue(decoder); err != nil {
+		return recipe{}, fmt.Errorf("dkim2: invalid Recipe JSON: %w", err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return recipe{}, errors.New("dkim2: trailing Recipe JSON data")
+	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(decoded, &object); err != nil || object == nil {
 		return recipe{}, errors.New("dkim2: invalid Recipe JSON object")
@@ -43,7 +55,7 @@ func parseRecipe(encoded string) (recipe, error) {
 		}
 		r.Headers = make(map[string][]recipeStep)
 		for name, value := range entries {
-			if name != strings.ToLower(name) || !validFieldName(name) {
+			if name != strings.ToLower(name) || !validFieldName(name) || unsigned(name) {
 				return recipe{}, fmt.Errorf("dkim2: invalid Recipe header %q", name)
 			}
 			steps, err := parseSteps(value)
@@ -65,6 +77,53 @@ func parseRecipe(encoded string) (recipe, error) {
 		}
 	}
 	return r, nil
+}
+
+// JSON maps silently discard duplicate keys; Recipes must reject them at
+// every nesting level before decoding into maps.
+func checkUniqueJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]bool)
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("non-string JSON key")
+			}
+			if key != strings.ToLower(key) {
+				return fmt.Errorf("Recipe JSON key %q is not lower case", key)
+			}
+			if seen[key] {
+				return fmt.Errorf("duplicate JSON key %q", key)
+			}
+			seen[key] = true
+			if err := checkUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := checkUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
@@ -94,6 +153,21 @@ func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
 				if strings.ContainsAny(line, "\r\n") {
 					return nil, errors.New("CR or LF in Recipe data")
 				}
+			}
+			result = append(result, recipeStep{Data: lines})
+		} else if data, ok := step["u"]; ok {
+			var encoded []string
+			if err := json.Unmarshal(data, &encoded); err != nil || len(encoded) == 0 {
+				return nil, errors.New("invalid Recipe u array")
+			}
+			var lines []string
+			for _, value := range encoded {
+				// FWS is not allowed inside JSON u strings.
+				decoded, err := b64(value)
+				if err != nil || strings.ContainsAny(value, " \t\r\n") || bytes.ContainsAny(decoded, "\r\n") {
+					return nil, errors.New("invalid Recipe u value")
+				}
+				lines = append(lines, string(decoded))
 			}
 			result = append(result, recipeStep{Data: lines})
 		} else {

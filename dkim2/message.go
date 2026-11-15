@@ -12,6 +12,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 )
 
 // Envelope contains the SMTP paths, including angle brackets and without
@@ -30,10 +33,11 @@ type HashSet struct {
 
 // Instance describes a Message-Instance field.
 type Instance struct {
-	Number int
-	Hashes []HashSet
-	Recipe string // base64-encoded JSON, if present
-	Raw    string
+	Number     int
+	Hashes     []HashSet
+	HashGroups [][]HashSet // comma is AND; pipe is OR
+	Recipe     string      // base64-encoded JSON, if present
+	Raw        string
 }
 
 // SignatureValue is one selector, algorithm and signature tuple.
@@ -45,17 +49,18 @@ type SignatureValue struct {
 
 // Signature describes a DKIM2-Signature field.
 type Signature struct {
-	Index      int
-	Instance   int
-	Timestamp  int64
-	MailFrom   string
-	Recipients []string
-	NextDomain string
-	Domain     string
-	Values     []SignatureValue
-	Nonce      string
-	Flags      []string
-	Raw        string
+	Index       int
+	Instance    int
+	Timestamp   int64
+	MailFrom    string
+	Recipients  []string
+	NextDomain  string
+	Domain      string
+	Values      []SignatureValue
+	ValueGroups [][]SignatureValue // comma is AND; pipe is OR
+	Nonce       string
+	Flags       []string
+	Raw         string
 }
 
 // Message contains the original wire header fields and body. Fields are
@@ -170,13 +175,17 @@ func tags(raw string) (map[string]string, error) {
 		return nil, errors.New("missing header colon")
 	}
 	out := make(map[string]string)
-	for _, part := range strings.Split(value, ";") {
+	parts := strings.Split(value, ";")
+	for index, part := range parts {
 		part = strings.Trim(part, " \t")
 		if part == "" {
+			if index != len(parts)-1 {
+				return nil, errors.New("empty tag between semicolons")
+			}
 			continue
 		}
 		k, v, ok := strings.Cut(part, "=")
-		k = strings.ToLower(strings.Trim(k, " \t"))
+		k = strings.Trim(k, " \t")
 		if !ok || k == "" || !validTag(k) {
 			return nil, fmt.Errorf("invalid tag %q", k)
 		}
@@ -197,6 +206,21 @@ func validTag(s string) bool {
 		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
 			return false
 		}
+	}
+	return true
+}
+
+func validTextString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range s {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' ||
+			c >= '0' && c <= '9' || c == '-' || c == '_' {
+			continue
+		}
+		return false
 	}
 	return true
 }
@@ -246,34 +270,46 @@ func parseInstance(raw string) (Instance, error) {
 	}
 	inst := Instance{Number: n, Raw: raw, Recipe: t["r"]}
 	if _, ok := t["r"]; ok {
+		if t["r"] == "" {
+			return Instance{}, errors.New("dkim2: empty r= Recipe")
+		}
 		if _, err := b64(t["r"]); err != nil {
 			return Instance{}, fmt.Errorf("dkim2: invalid Recipe base64: %w", err)
 		}
 	}
 	seen := make(map[string]bool)
-	for _, entry := range strings.Split(t["h"], ",") {
-		parts := strings.Split(entry, ":")
-		if len(parts) != 3 {
-			return Instance{}, errors.New("dkim2: invalid h= hash set")
+	for _, group := range strings.Split(t["h"], "|") {
+		var sets []HashSet
+		for _, entry := range strings.Split(group, ",") {
+			parts := strings.Split(entry, ":")
+			if len(parts) != 3 {
+				return Instance{}, errors.New("dkim2: invalid h= hash set")
+			}
+			algo := strings.Trim(parts[0], " \t")
+			if !validTextString(algo) || seen[algo] {
+				return Instance{}, errors.New("dkim2: duplicate or empty hash algorithm")
+			}
+			seen[algo] = true
+			headerHash, bodyHash := stripWSP(parts[1]), stripWSP(parts[2])
+			if headerHash == "" || bodyHash == "" {
+				return Instance{}, errors.New("dkim2: empty h= hash value")
+			}
+			decodedHeader, err := b64(headerHash)
+			if err != nil {
+				return Instance{}, fmt.Errorf("dkim2: invalid header hash: %w", err)
+			}
+			decodedBody, err := b64(bodyHash)
+			if err != nil {
+				return Instance{}, fmt.Errorf("dkim2: invalid body hash: %w", err)
+			}
+			if (algo == "sha256" && (len(decodedHeader) != 32 || len(decodedBody) != 32)) || (algo == "sha512" && (len(decodedHeader) != 64 || len(decodedBody) != 64)) {
+				return Instance{}, errors.New("dkim2: incorrect hash length")
+			}
+			set := HashSet{algo, headerHash, bodyHash}
+			inst.Hashes = append(inst.Hashes, set)
+			sets = append(sets, set)
 		}
-		algo := strings.ToLower(strings.Trim(parts[0], " \t"))
-		if algo == "" || seen[algo] {
-			return Instance{}, errors.New("dkim2: duplicate or empty hash algorithm")
-		}
-		seen[algo] = true
-		headerHash, bodyHash := stripWSP(parts[1]), stripWSP(parts[2])
-		decodedHeader, err := b64(headerHash)
-		if err != nil {
-			return Instance{}, fmt.Errorf("dkim2: invalid header hash: %w", err)
-		}
-		decodedBody, err := b64(bodyHash)
-		if err != nil {
-			return Instance{}, fmt.Errorf("dkim2: invalid body hash: %w", err)
-		}
-		if (algo == "sha256" && (len(decodedHeader) != 32 || len(decodedBody) != 32)) || (algo == "sha512" && (len(decodedHeader) != 64 || len(decodedBody) != 64)) {
-			return Instance{}, errors.New("dkim2: incorrect hash length")
-		}
-		inst.Hashes = append(inst.Hashes, HashSet{algo, headerHash, bodyHash})
+		inst.HashGroups = append(inst.HashGroups, sets)
 	}
 	return inst, nil
 }
@@ -331,37 +367,44 @@ func parseSignature(raw string) (Signature, error) {
 		}
 	}
 	seen := make(map[string]bool)
-	counts := make(map[string]int)
-	for _, entry := range strings.Split(t["s"], ",") {
-		parts := strings.Split(entry, ":")
-		if len(parts) != 3 {
-			return Signature{}, errors.New("dkim2: invalid s= signature set")
+	for _, group := range strings.Split(t["s"], "|") {
+		var sets []SignatureValue
+		for _, entry := range strings.Split(group, ",") {
+			parts := strings.Split(entry, ":")
+			if len(parts) != 3 {
+				return Signature{}, errors.New("dkim2: invalid s= signature set")
+			}
+			selector, algo, value := strings.Trim(parts[0], " \t"), strings.Trim(parts[1], " \t"), stripWSP(parts[2])
+			if !validDomain(selector) || !validTextString(algo) || value == "" || seen[selector] {
+				return Signature{}, errors.New("dkim2: invalid or duplicate selector")
+			}
+			seen[selector] = true
+			decoded, err := b64(value)
+			if err != nil {
+				return Signature{}, fmt.Errorf("dkim2: invalid signature base64: %w", err)
+			}
+			if algo == "ed25519-sha256" && len(decoded) != ed25519.SignatureSize {
+				return Signature{}, errors.New("dkim2: incorrect Ed25519 signature length")
+			}
+			if algo == "mldsa44" && len(decoded) != mldsa44.SignatureSize {
+				return Signature{}, errors.New("dkim2: incorrect ML-DSA-44 signature length")
+			}
+			set := SignatureValue{selector, algo, value}
+			sig.Values = append(sig.Values, set)
+			sets = append(sets, set)
 		}
-		selector, algo, value := strings.Trim(parts[0], " \t"), strings.ToLower(strings.Trim(parts[1], " \t")), stripWSP(parts[2])
-		if !validDomain(selector) || algo == "" || seen[selector] {
-			return Signature{}, errors.New("dkim2: invalid or duplicate selector")
-		}
-		seen[selector] = true
-		counts[algo]++
-		if counts[algo] > 2 {
-			return Signature{}, errors.New("dkim2: too many signatures with one algorithm")
-		}
-		decoded, err := b64(value)
-		if err != nil {
-			return Signature{}, fmt.Errorf("dkim2: invalid signature base64: %w", err)
-		}
-		if algo == "ed25519-sha256" && len(decoded) != ed25519.SignatureSize {
-			return Signature{}, errors.New("dkim2: incorrect Ed25519 signature length")
-		}
-		sig.Values = append(sig.Values, SignatureValue{selector, algo, value})
+		sig.ValueGroups = append(sig.ValueGroups, sets)
 	}
-	if f := t["f"]; f != "" {
+	if f, present := t["f"]; present {
+		if f == "" {
+			return Signature{}, errors.New("dkim2: empty f= flag list")
+		}
 		for _, flag := range strings.Split(f, ",") {
 			flag = strings.Trim(flag, " \t")
-			if flag == "" {
+			if !validTextString(flag) {
 				return Signature{}, errors.New("dkim2: empty flag")
 			}
-			sig.Flags = append(sig.Flags, strings.ToLower(flag))
+			sig.Flags = append(sig.Flags, flag)
 		}
 	}
 	return sig, nil
@@ -455,7 +498,7 @@ func validAddressLiteral(s string) bool {
 }
 
 func validLocalPart(s string) bool {
-	if len(s) == 0 {
+	if len(s) == 0 || !utf8.ValidString(s) {
 		return false
 	}
 	if s[0] == '"' {
@@ -466,12 +509,12 @@ func validLocalPart(s string) bool {
 			c := s[i]
 			if c == '\\' {
 				i++
-				if i >= len(s)-1 || s[i] < 32 || s[i] > 126 {
+				if i >= len(s)-1 || s[i] < 32 || s[i] == 127 {
 					return false
 				}
 				continue
 			}
-			if c < 32 || c > 126 || c == '"' || c == '\\' {
+			if c < 32 || c == 127 || c == '"' || c == '\\' {
 				return false
 			}
 		}
@@ -483,7 +526,7 @@ func validLocalPart(s string) bool {
 	for i := range s {
 		c := s[i]
 		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' ||
-			c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-/=?^_`{|}~.", rune(c)) {
+			c >= '0' && c <= '9' || c >= 128 || strings.ContainsRune("!#$%&'*+-/=?^_`{|}~.", rune(c)) {
 			continue
 		}
 		return false
@@ -521,10 +564,10 @@ func domainMatch(child, parent string) bool {
 
 var unsignedFields = map[string]bool{
 	"apparently-to": true, "arc-authentication-results": true, "arc-message-signature": true,
-	"arc-seal": true, "authentication-results": true, "auto-submitted": true,
+	"arc-seal": true, "authentication-results": true,
 	"delivered-to": true, "dkim-signature": true, "dl-expansion-history": true,
 	"original-recipient": true, "received": true, "return-path": true,
-	"sio-label-history": true, "vbr-info": true, "x400-received": true, "x400-trace": true,
+	"sio-label-history": true, "x400-received": true, "x400-trace": true,
 	"message-instance": true, "dkim2-signature": true,
 }
 
@@ -629,15 +672,15 @@ func validateStructure(m *Message) error {
 		if inst.Number != i+1 {
 			return fmt.Errorf("dkim2: missing or duplicate Message-Instance m=%d", i+1)
 		}
-		if i > 0 && inst.Recipe == "" {
-			return fmt.Errorf("dkim2: Message-Instance m=%d has no Recipe", i+1)
-		}
 	}
 	lastM := 0
 	signed := make([]bool, len(m.Instances))
 	for i, sig := range m.Signatures {
 		if sig.Index != i+1 {
 			return fmt.Errorf("dkim2: missing or duplicate DKIM2-Signature i=%d", i+1)
+		}
+		if i == 0 && hasFlag(sig.Flags, "exploded") {
+			return errors.New("dkim2: DKIM2-Signature i=1 has exploded flag")
 		}
 		if sig.Instance < lastM || sig.Instance > len(m.Instances) {
 			return fmt.Errorf("dkim2: invalid m= in signature i=%d", sig.Index)
