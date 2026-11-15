@@ -53,6 +53,36 @@ For outgoing BCC delivery, populate `SignOptions.BCCRecipients` with all blind-r
 
 `VerifyOptions.ReplayCheck` runs after full authentication, including for messages with `exploded`. Evaluate `Result.ReplayDetected`, `ReplayErr`, and `ExplodedAt` in your delivery policy; `ExplodedAt` identifies the signature index and domain of each signer claiming multiple delivery. Authentication `pass` alone does not authorize delivery.
 
+### Provisional verification and DSNs
+
+`dkim2.VerifyProvisional(raw, envelope, verification)` implements draft-09 section 13.2. It checks only the latest signature, current message hashes, timestamp and SMTP envelope. Its separate `ProvisionalResult` must not be treated as a full-chain `Verify` result. Historical fields must still be syntactically parseable. A successful out-of-band `nd=` arrangement is marked `PendingNextDomain`; standard DSN generation refuses that pending state. Provisional verification never calls the replay store.
+
+The DSN APIs implement draft-09 section 16 without sending mail or changing ordinary mmauth verification:
+
+```go
+report, err := dkim2.CreateDSN(receivedWire, receivedEnvelope, dkim2.DSNOptions{
+    Sign: dkim2.SignOptions{Domain: "destination.test", Selector: "s1", Key: privateKey},
+    Verify: verification,
+    Recipients: []dkim2.DSNRecipient{{
+        FinalRecipient: "<bob@destination.test>",
+        Action: "failed", Status: "5.1.1", Diagnostic: "550 unknown user",
+    }},
+})
+// On success, deliver report.Wire with exactly report.Envelope.
+
+checked := dkim2.VerifyDSN(dsnWire, dsnEnvelope, dkim2.DSNVerifyOptions{
+    Verification: verification,
+    LocalDomains: []string{"relay.test"}, // Exact signing domains used locally.
+})
+// Inspect checked.Status, checked.Authentication and local delivery policy.
+```
+
+`CreateDSN` authenticates the received message provisionally, derives a null MAIL FROM and the return recipient from the authenticated latest hop, and checks the DSN signing domain against the original recipients. Never set `DSNOptions.Sign.Envelope` or `NextDomain`: these are derived by the DSN API. `Recipients` must describe real delivery outcomes for actual recipients; no failure status is invented. `HeadersOnly` selects `text/rfc822-headers` instead of the unchanged original `message/rfc822` MIME part. A null original MAIL FROM is always rejected to prevent notification loops.
+
+`VerifyDSN` authenticates the DSN itself and the embedded original's latest signature and hashes, confirms the local sending identity and DSN origin, and checks the return address. `HeadersOnly` explicitly records when the omitted body was not checked. A `None`, `Fail`, `PermError` or `TempError` result must not be propagated. DNS lookup/time limits cover both outer and embedded verification. The human-readable MIME part accepts `text/*` and opaque `multipart/alternative` presentations; the library does not render them.
+
+To propagate a DSN, call `dkim2.PropagateDSN` with `DSNPropagationOptions`. Supply `Verification`, fresh `Notification` content, and `ReceivedSignatureIndex`: the highest original signature index recorded when this particular message arrived, before this forwarder added its signatures. Bind that metadata to the message in your MTA; do not accept the cutoff from an unauthenticated report. The API removes only signatures belonging to `LocalDomains`, reverses the relevant Recipes, removes unsigned routing fields, and issues a new DSN with one signature and one Message-Instance. A null Recipe forces headers-only output. Provide upstream-safe human text, diagnostics and recipient results: downstream report text is never copied automatically. The MTA remains responsible for SMTP transmission, retries and replay/delivery policy.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

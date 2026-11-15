@@ -53,6 +53,36 @@ BCCを含む送信では、論理的な配送全体のBCC宛先SMTPパスを`Sig
 
 `VerifyOptions.ReplayCheck`は完全な認証後、`exploded`の有無にかかわらず呼び出します。配送ポリシーでは`Result.ReplayDetected`・`ReplayErr`・`ExplodedAt`を評価してください。`ExplodedAt`には複数配送を申告した署名番号とドメインが入ります。認証結果`pass`だけで配送を許可するものではありません。
 
+### 暫定検証とDSN
+
+`dkim2.VerifyProvisional(raw, envelope, verification)`でdraft-09 §13.2の暫定検証を行います。最新署名・現在のメッセージハッシュ・時刻・SMTPエンベロープだけを検証します。戻り値は独立した`ProvisionalResult`であり、その`Pass`を完全検証の成功とみなさないでください。過去のフィールドにも解析可能な構文を要求します。取り決めにより最高位の`nd=`を受理した場合は`PendingNextDomain`が立ち、その状態での標準DSN生成は拒否します。暫定検証はリプレイストアを呼び出しません。
+
+draft-09 §16のDSNは、次の明示的なAPIで扱います。SMTP送信そのものや通常のmmauth検証処理は変更しません。
+
+```go
+report, err := dkim2.CreateDSN(receivedWire, receivedEnvelope, dkim2.DSNOptions{
+    Sign: dkim2.SignOptions{Domain: "destination.test", Selector: "s1", Key: privateKey},
+    Verify: verification,
+    Recipients: []dkim2.DSNRecipient{{
+        FinalRecipient: "<bob@destination.test>",
+        Action: "failed", Status: "5.1.1", Diagnostic: "550 unknown user",
+    }},
+})
+// 成功時、report.Wireをreport.EnvelopeどおりのSMTPエンベロープで配送する。
+
+checked := dkim2.VerifyDSN(dsnWire, dsnEnvelope, dkim2.DSNVerifyOptions{
+    Verification: verification,
+    LocalDomains: []string{"relay.test"}, // 自システムが実際に使う署名ドメイン。
+})
+// checked.Status・checked.Authenticationとローカル配送ポリシーを評価する。
+```
+
+`CreateDSN`は受信メールの暫定検証を必須とし、認証した最新ホップから返送先を決め、null MAIL FROMの署名済み3部構成MIME通知を生成します。DSNの署名ドメインと元メールの宛先ドメインの関係も確認します。`DSNOptions.Sign.Envelope`・`NextDomain`は指定せず、APIによる導出に任せてください。`Recipients`には実際の受信宛先についての正しい配送結果を指定します。ライブラリが失敗情報を捏造することはありません。`HeadersOnly`で原文全体の`message/rfc822`の代わりに`text/rfc822-headers`を選べます。元メールのMAIL FROMがnullなら、通知ループを防ぐため生成を拒否します。
+
+`VerifyDSN`はDSN自体と埋め込み原文の最新署名・ハッシュを認証し、自システムの署名ドメイン・MAIL FROM、DSN発信者、実際の返送宛先を確認します。本文を含まない場合は`HeadersOnly`で明示します。`None`・`Fail`・`PermError`・`TempError`の通知は上流へ伝播させないでください。DNS照会数・時間はDSN本体と原文を合算して制限します。受信MIMEの人間向け部分は`text/*`と、内部構造を解釈しない`multipart/alternative`に対応し、内容の表示処理は行いません。
+
+上流への伝播には`dkim2.PropagateDSN`と`DSNPropagationOptions`を使います。`Verification`、新しい通知内容の`Notification`、元メールをこの転送システムが受信した時点の最高署名番号`ReceivedSignatureIndex`を指定してください。この番号はメールと対応付けてMTA側に保存し、未認証の通知から採用しないでください。APIは`LocalDomains`に属する追加署名だけを除去し、該当Recipeを逆適用し、未署名の経路フィールドを削除したうえで、署名とMessage-Instanceがそれぞれ1個の新しいDSNを生成します。null Recipeがあればヘッダーのみの通知に切り替えます。人間向け文面・診断・配送結果には上流へ開示してよい内容を指定してください。下流DSNの文面は自動転記しません。SMTP送信、再送、リプレイ・配送判断はMTA側の責任です。
+
 ## ライセンス
 
 このプロジェクトは MIT ライセンスのもとで公開されています。詳細は [LICENSE](LICENSE) ファイルをご覧ください。

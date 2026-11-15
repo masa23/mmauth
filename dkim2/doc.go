@@ -14,7 +14,13 @@
 // hop. Forward and Revise require OutOfBandArrangement because they only check
 // hashes and custody, not prior DNS keys.
 // Verify can call an MTA-owned replay store after authentication. Replay
-// storage, delivery policy and DSN handling belong to the MTA.
+// storage and delivery policy belong to the MTA.
+// VerifyProvisional implements the latest-hop assessment in section 13.2; its
+// Pass result does not establish that the entire message is Fully Verified.
+// CreateDSN, VerifyDSN and PropagateDSN implement section 16's signed MIME
+// reports and receipt-time reconstruction. They return bytes and an envelope;
+// the MTA retains receipt metadata, supplies truthful delivery results and
+// decides whether to send the report. Null-sender messages never cause DSNs.
 // ReplayCheck runs even for exploded messages; Result.ExplodedAt identifies
 // which authenticated signers claim multiple delivery.
 // BCC signing requires BCCRecipients metadata and separate SMTP transactions
