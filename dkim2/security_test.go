@@ -32,7 +32,9 @@ func (waitForContextResolver) LookupTXT(ctx context.Context, _ string) ([]string
 func TestVerificationLimitsDNSLookupsAcrossSelectors(t *testing.T) {
 	hash := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	signature := base64.StdEncoding.EncodeToString(make([]byte, 64))
-	sets := make([]string, 1000)
+	// Stay within the per-field parser budget while exceeding both the
+	// default and configured DNS lookup budgets.
+	sets := make([]string, 200)
 	for i := range sets {
 		sets[i] = fmt.Sprintf("s%d:ed25519-sha256:%s", i, signature)
 	}

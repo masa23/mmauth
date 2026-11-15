@@ -73,8 +73,21 @@ type Message struct {
 	separator  bool
 }
 
+// Resource limits apply to the standalone package as well as the mmauth adapter.
+// A body can be much larger than the headers; cap headers separately so parser
+// and canonicalization work cannot be amplified by millions of small fields.
+const (
+	maxMessageBytes     = 32 << 20
+	maxHeaderBytes      = 1 << 20
+	maxHeaderFieldBytes = 64 << 10
+	maxHeaderFields     = 4096
+)
+
 // Parse splits an RFC 5322 message and parses its DKIM2 fields.
 func Parse(wire []byte) (*Message, error) {
+	if len(wire) > maxMessageBytes {
+		return nil, errors.New("dkim2: message exceeds 32 MiB")
+	}
 	m := &Message{}
 	sep := bytes.Index(wire, []byte("\r\n\r\n"))
 	for i, c := range wire {
@@ -89,6 +102,9 @@ func Parse(wire []byte) (*Message, error) {
 	} else {
 		block = wire // RFC 5322 permits a message with only header fields.
 	}
+	if len(block) > maxHeaderBytes {
+		return nil, errors.New("dkim2: headers exceed 1 MiB")
+	}
 	if len(block) == 0 {
 		return nil, errors.New("dkim2: message has no header fields")
 	}
@@ -96,34 +112,45 @@ func Parse(wire []byte) (*Message, error) {
 		return nil, errors.New("dkim2: unterminated header field")
 	}
 	for len(block) > 0 {
+		if len(m.Headers) >= maxHeaderFields {
+			return nil, errors.New("dkim2: header count exceeds 4096")
+		}
 		end := bytes.Index(block, []byte("\r\n"))
 		if end < 0 {
 			return nil, errors.New("dkim2: malformed header field")
 		}
-		field := append([]byte(nil), block[:end+2]...)
-		block = block[end+2:]
-		for len(block) > 0 && (block[0] == ' ' || block[0] == '\t') {
-			end = bytes.Index(block, []byte("\r\n"))
+		fieldEnd := end + 2
+		remaining := block[fieldEnd:]
+		for len(remaining) > 0 && (remaining[0] == ' ' || remaining[0] == '\t') {
+			end = bytes.Index(remaining, []byte("\r\n"))
 			if end < 0 {
 				return nil, errors.New("dkim2: unterminated folded header field")
 			}
-			field = append(field, block[:end+2]...)
-			block = block[end+2:]
+			fieldEnd += end + 2
+			if fieldEnd > maxHeaderFieldBytes {
+				return nil, errors.New("dkim2: header field exceeds 64 KiB")
+			}
+			remaining = remaining[end+2:]
 		}
-		name, _, ok := strings.Cut(string(field), ":")
+		if fieldEnd > maxHeaderFieldBytes {
+			return nil, errors.New("dkim2: header field exceeds 64 KiB")
+		}
+		field := string(block[:fieldEnd])
+		block = remaining
+		name, _, ok := strings.Cut(field, ":")
 		if !ok || !validFieldName(name) {
 			return nil, errors.New("dkim2: invalid header field name")
 		}
-		m.Headers = append(m.Headers, string(field))
+		m.Headers = append(m.Headers, field)
 		switch strings.ToLower(name) {
 		case "message-instance":
-			inst, err := parseInstance(string(field))
+			inst, err := parseInstance(field)
 			if err != nil {
 				return nil, err
 			}
 			m.Instances = append(m.Instances, inst)
 		case "dkim2-signature":
-			sig, err := parseSignature(string(field))
+			sig, err := parseSignature(field)
 			if err != nil {
 				return nil, err
 			}
@@ -152,17 +179,30 @@ func unfold(s string) (string, error) {
 		return "", errors.New("missing CRLF")
 	}
 	s = strings.TrimSuffix(s, "\r\n")
+	var out strings.Builder
+	start := 0
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\r' {
 			if i+2 >= len(s) || s[i+1] != '\n' || (s[i+2] != ' ' && s[i+2] != '\t') {
 				return "", errors.New("invalid header folding")
 			}
-			s = s[:i] + s[i+2:]
+			// Copy each segment once instead of reallocating the complete
+			// field for every fold (quadratic on attacker-controlled input).
+			if start == 0 {
+				out.Grow(len(s))
+			}
+			out.WriteString(s[start:i])
+			i++ // Skip LF; retain the following whitespace.
+			start = i + 1
 		} else if s[i] == '\n' {
 			return "", errors.New("bare newline in header")
 		}
 	}
-	return s, nil
+	if start == 0 {
+		return s, nil
+	}
+	out.WriteString(s[start:])
+	return out.String(), nil
 }
 
 func tags(raw string) (map[string]string, error) {
@@ -379,6 +419,18 @@ func parseSignature(raw string) (Signature, error) {
 				return Signature{}, errors.New("dkim2: invalid or duplicate selector")
 			}
 			seen[selector] = true
+			maxSignatureBytes := 0
+			switch algo {
+			case "rsa-sha256":
+				maxSignatureBytes = maxRSASignatureBytes
+			case "ed25519-sha256":
+				maxSignatureBytes = ed25519.SignatureSize
+			case "mldsa44":
+				maxSignatureBytes = mldsa44.SignatureSize
+			}
+			if maxSignatureBytes > 0 && len(value) > base64.StdEncoding.EncodedLen(maxSignatureBytes) {
+				return Signature{}, errors.New("dkim2: signature exceeds algorithm size limit")
+			}
 			decoded, err := b64(value)
 			if err != nil {
 				return Signature{}, fmt.Errorf("dkim2: invalid signature base64: %w", err)
@@ -388,6 +440,9 @@ func parseSignature(raw string) (Signature, error) {
 			}
 			if algo == "mldsa44" && len(decoded) != mldsa44.SignatureSize {
 				return Signature{}, errors.New("dkim2: incorrect ML-DSA-44 signature length")
+			}
+			if algo == "rsa-sha256" && len(decoded) > maxRSASignatureBytes {
+				return Signature{}, errors.New("dkim2: RSA signature exceeds 8192 bits")
 			}
 			set := SignatureValue{selector, algo, value}
 			sig.Values = append(sig.Values, set)

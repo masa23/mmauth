@@ -47,6 +47,12 @@ DKIM2は受信メールの生データ全体を使います。有効時のみ、
 
 DKIM2検証では、メール1通につきDNS照会32回、DNS処理15秒を既定の上限とします。`dkim2.VerifyOptions.MaxDNSLookups`と`DNSBudget`で調整できます。受信した署名を検証せずに追加署名する取り決めがある場合に限り、`Forward`・`Revise`で`SignOptions.OutOfBandArrangement = true`を指定します。通常の転送には`ForwardChecked`・`ReviseChecked`を使用します。不正なDKIM・ARCヘッダーに対する従来の`Close`エラーは維持されますが、メール全体を保持できた場合は、その後`Verify`を呼ぶことでDKIM2の結果を独立して取得できます。
 
+`dkim2`単体にも、メッセージ32 MiB、ヘッダー合計1 MiB、1フィールド64 KiB、4096フィールドの上限があります。保持上限を引き上げても、この解析上限は変わりません。RSA鍵は1024〜8192bit、指数65537に制限します。国際化ドメインは有効なIDNAのA-label・U-labelを使用し、互換文字による表記、不正UTF-8、ASCIIだけに復号されるPunycodeラベルは拒否します。
+
+BCCを含む送信では、論理的な配送全体のBCC宛先SMTPパスを`SignOptions.BCCRecipients`に渡し、通常宛先用とBCC宛先用を別コピー・別SMTPトランザクションに分け、それぞれ実際の`Envelope`で署名してください。申告したBCC宛先と通常宛先の混在は拒否します。値のある`Bcc`・`Resent-Bcc`ヘッダーは署名前に削除してください。削除後はライブラリがBCCを推測できないため、呼び出し側からのメタデータ指定が必要です。そのコピーのエンベロープに含まれないBCCメタデータは出力されません。
+
+`VerifyOptions.ReplayCheck`は完全な認証後、`exploded`の有無にかかわらず呼び出します。配送ポリシーでは`Result.ReplayDetected`・`ReplayErr`・`ExplodedAt`を評価してください。`ExplodedAt`には複数配送を申告した署名番号とドメインが入ります。認証結果`pass`だけで配送を許可するものではありません。
+
 ## ライセンス
 
 このプロジェクトは MIT ライセンスのもとで公開されています。詳細は [LICENSE](LICENSE) ファイルをご覧ください。

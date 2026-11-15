@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +18,13 @@ import (
 
 const maxVerificationDNSLookups = 32
 const maxVerificationDNSTime = 15 * time.Second
+
+// Keep public-key parsing and RSA verification bounded even when the sender
+// controls the DNS record. These are local resource limits, not protocol limits.
+const maxRSAKeyBits = 8192
+const maxRSASignatureBytes = maxRSAKeyBits / 8
+const maxRSAPublicKeyBytes = 2048 // Includes PKCS#1 or SPKI DER overhead.
+const maxDNSTXTRecordBytes = 16 << 10
 
 var errDNSLookupBudget = errors.New("dkim2: DNS lookup limit exceeded")
 
@@ -121,6 +129,9 @@ func lookupTXT(resolver domainkey.TXTResolver, name string, missingOK bool) (str
 	if selected == "" && !missingOK {
 		return "", &permanentKeyError{fmt.Errorf("dkim2: %s has no usable DKIM1 key", name)}
 	}
+	if len(selected) > maxDNSTXTRecordBytes {
+		return "", &permanentKeyError{fmt.Errorf("dkim2: %s TXT record exceeds size limit", name)}
+	}
 	return selected, nil
 }
 
@@ -153,9 +164,25 @@ func lookupKey(resolver domainkey.TXTResolver, domain, selector, algorithm strin
 	if keyType != want {
 		return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s algorithm mismatch", name)}
 	}
+	maxKeyBytes := maxRSAPublicKeyBytes
+	switch keyType {
+	case "ed25519":
+		maxKeyBytes = ed25519.PublicKeySize
+	case "mldsa44":
+		maxKeyBytes = mldsa44.PublicKeySize
+	}
+	// p= permits whitespace, but reject excess encoded data before allocating
+	// its decoded form or passing DER to the standard-library parser.
+	encoded = stripWSP(encoded)
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxKeyBytes) {
+		return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s p= exceeds size limit", name)}
+	}
 	decoded, err := b64(encoded)
 	if err != nil {
 		return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s invalid p=: %w", name, err)}
+	}
+	if len(decoded) > maxKeyBytes {
+		return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s p= exceeds size limit", name)}
 	}
 	switch keyType {
 	case "ed25519":
@@ -181,6 +208,9 @@ func lookupKey(resolver domainkey.TXTResolver, domain, selector, algorithm strin
 		}
 		if pub.N.BitLen() < 1024 {
 			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s RSA public key is shorter than 1024 bits", name)}
+		}
+		if pub.N.BitLen() > maxRSAKeyBits {
+			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s RSA public key exceeds %d bits", name, maxRSAKeyBits)}
 		}
 		if pub.E != 65537 {
 			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s RSA public exponent must be 65537", name)}

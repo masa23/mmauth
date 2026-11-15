@@ -3,14 +3,33 @@ package dkim2
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/idna"
 )
 
+// SMTP domains must be DNS A-labels or IDNA U-labels. Registration validation
+// rejects compatibility/ignored characters rather than mapping them into an
+// ACE prefix, which also prevents disguised ASCII-only Punycode labels.
+var smtpIDNA = idna.New(idna.ValidateForRegistration())
+
 func asciiDomain(domain string) (string, error) {
-	ascii, err := idna.Lookup.ToASCII(domain)
+	invalid := errors.New("dkim2: invalid internationalized domain")
+	if len(domain) > 4*253 || !utf8.ValidString(domain) {
+		return "", invalid
+	}
+	domain = strings.ToLower(domain)
+	for _, label := range strings.Split(domain, ".") {
+		// An ASCII-only Punycode payload ends in '-'. Older x/net versions
+		// decode it into an unrelated ASCII DNS label instead of rejecting it
+		// (GO-2026-5026). Validate ACE syntax before any Punycode decoding.
+		if strings.HasPrefix(label, "xn--") && !validDomain(label) {
+			return "", invalid
+		}
+	}
+	ascii, err := smtpIDNA.ToASCII(domain)
 	if err != nil || !validDomain(ascii) {
-		return "", errors.New("dkim2: invalid internationalized domain")
+		return "", invalid
 	}
 	return ascii, nil
 }

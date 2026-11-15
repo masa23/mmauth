@@ -47,6 +47,12 @@ Only enabled messages with DKIM2 fields are kept in memory, up to 32 MiB by defa
 
 DKIM2 verification allows 32 DNS lookups and 15 seconds of DNS time per message by default; `dkim2.VerifyOptions.MaxDNSLookups` and `DNSBudget` can adjust these limits. `Forward` and `Revise` require `SignOptions.OutOfBandArrangement = true` for an explicit arrangement that permits signing without verifying the incoming chain. Use `ForwardChecked` and `ReviseChecked` for ordinary forwarding. A malformed DKIM or ARC header still causes the existing `Close` error; after `Close`, `Verify` can independently report DKIM2 when its complete input was captured.
 
+The standalone DKIM2 parser also limits messages to 32 MiB, headers to 1 MiB in total, each header field to 64 KiB, and header count to 4096. Raising the adapter's capture limit does not raise these parser limits. RSA keys must be 1024–8192 bits with exponent 65537. Internationalized domains must be valid IDNA A-labels or U-labels; compatibility forms, invalid UTF-8, and ASCII-only Punycode labels are rejected.
+
+For outgoing BCC delivery, populate `SignOptions.BCCRecipients` with all blind-recipient SMTP paths of the logical delivery, split ordinary and blind recipients into separate copies and SMTP transactions, and sign each copy with its own `Envelope`. Mixing declared BCC and ordinary recipients is rejected. Remove populated `Bcc` and `Resent-Bcc` headers before signing. Once those headers are removed, the library cannot infer BCC recipients, so the caller must supply this metadata. BCC metadata outside the copy's envelope is not written into the message.
+
+`VerifyOptions.ReplayCheck` runs after full authentication, including for messages with `exploded`. Evaluate `Result.ReplayDetected`, `ReplayErr`, and `ExplodedAt` in your delivery policy; `ExplodedAt` identifies the signature index and domain of each signer claiming multiple delivery. Authentication `pass` alone does not authorize delivery.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

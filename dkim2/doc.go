@@ -15,5 +15,11 @@
 // hashes and custody, not prior DNS keys.
 // Verify can call an MTA-owned replay store after authentication. Replay
 // storage, delivery policy and DSN handling belong to the MTA.
-// This API consumes the complete message in memory.
+// ReplayCheck runs even for exploded messages; Result.ExplodedAt identifies
+// which authenticated signers claim multiple delivery.
+// BCC signing requires BCCRecipients metadata and separate SMTP transactions
+// for ordinary and blind recipients. Remove populated Bcc/Resent-Bcc fields.
+// This API consumes the complete message in memory. It limits messages to
+// 32 MiB, headers to 1 MiB, individual fields to 64 KiB and fields to 4096.
+// SMTP internationalized domains must be valid IDNA A-labels or U-labels.
 package dkim2

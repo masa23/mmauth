@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +30,13 @@ type SignOptions struct {
 	HashAlgorithm string
 	Nonce         string
 	Flags         []string
+	// BCCRecipients identifies all blind recipients of the logical delivery,
+	// including ones outside this copy's Envelope. A copy containing any of
+	// them may contain only blind recipients. Split normal and BCC deliveries
+	// into separate SMTP transactions and sign each copy separately. These
+	// paths are never serialized separately, and cannot be inferred from a
+	// message after its Bcc fields were removed.
+	BCCRecipients []string
 	// PolicyResolver supplies Domain Policy Records when a subdomain signs for
 	// the From domain. Nil uses the system resolver.
 	PolicyResolver domainkey.TXTResolver
@@ -44,6 +53,9 @@ type SignOptions struct {
 func Sign(wire []byte, options SignOptions) ([]byte, error) {
 	m, err := Parse(wire)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkBlindRecipientHeaders(m.Headers); err != nil {
 		return nil, err
 	}
 	if len(m.Instances) != 0 || len(m.Signatures) != 0 {
@@ -86,7 +98,7 @@ func Sign(wire []byte, options SignOptions) ([]byte, error) {
 	out = append(out, sig...)
 	out = append(out, mi...)
 	out = append(out, wire...)
-	return out, nil
+	return checkedSignedOutput(out)
 }
 
 // Forward adds a signature for an unchanged message instance only when the
@@ -102,6 +114,9 @@ func Forward(wire []byte, options SignOptions) ([]byte, error) {
 func forward(wire []byte, options SignOptions) ([]byte, error) {
 	m, err := Parse(wire)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkBlindRecipientHeaders(m.Headers); err != nil {
 		return nil, err
 	}
 	if err := validateStructure(m); err != nil {
@@ -128,7 +143,7 @@ func forward(wire []byte, options SignOptions) ([]byte, error) {
 	out := make([]byte, 0, len(sig)+len(wire))
 	out = append(out, sig...)
 	out = append(out, wire...)
-	return out, nil
+	return checkedSignedOutput(out)
 }
 
 // ForwardChecked authenticates the incoming message before adding a hop.
@@ -155,6 +170,9 @@ func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error)
 func revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error) {
 	m, err := Parse(wire)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkBlindRecipientHeaders(m.Headers); err != nil {
 		return nil, err
 	}
 	if err := validateStructure(m); err != nil {
@@ -219,6 +237,15 @@ func revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error)
 	out = append(out, sig...)
 	out = append(out, mi...)
 	out = append(out, wire...)
+	return checkedSignedOutput(out)
+}
+
+// Apply the receiver's resource limits after adding DKIM2 fields. A successful
+// signing operation must not emit a message that this package cannot parse.
+func checkedSignedOutput(out []byte) ([]byte, error) {
+	if _, err := Parse(out); err != nil {
+		return nil, fmt.Errorf("dkim2: signed output is invalid: %w", err)
+	}
 	return out, nil
 }
 
@@ -301,6 +328,19 @@ func validateSignOptions(o SignOptions) error {
 		if d := pathDomain(o.Envelope.MailFrom); d != "" && !domainMatch(d, o.Domain) {
 			return errors.New("dkim2: d= does not match MAIL FROM domain")
 		}
+		blindRecipients := make(map[string]bool, len(o.BCCRecipients))
+		for _, bcc := range o.BCCRecipients {
+			blindRecipients[bccMailboxKey(bcc)] = true
+		}
+		blind, normal := false, false
+		for _, recipient := range o.Envelope.RcptTo {
+			isBlind := blindRecipients[bccMailboxKey(recipient)]
+			blind = blind || isBlind
+			normal = normal || !isBlind
+		}
+		if blind && normal {
+			return errors.New("dkim2: split BCC and non-BCC recipients into separate signed SMTP transactions")
+		}
 	}
 	if o.HashAlgorithm != "" && o.HashAlgorithm != "sha256" && o.HashAlgorithm != "sha512" {
 		return errors.New("dkim2: unsupported hash algorithm")
@@ -325,7 +365,85 @@ func normalizeSignOptions(options SignOptions) (SignOptions, error) {
 		}
 		options.Envelope = envelope
 	}
+	if len(options.BCCRecipients) > 0 {
+		paths := make([]string, 0, len(options.BCCRecipients))
+		for _, recipient := range options.BCCRecipients {
+			path, err := normalizePath(recipient)
+			if err != nil || !validPath(path, false) {
+				return options, errors.New("dkim2: invalid BCC recipient path")
+			}
+			paths = append(paths, path)
+		}
+		options.BCCRecipients = paths
+	}
 	return options, nil
+}
+
+// bccMailboxKey compares validated, IDNA-normalized recipient paths by mailbox
+// identity, not the exact SMTP spelling that DKIM2 authenticates. Source routes
+// do not change the destination mailbox, and optional local-part quoting and
+// quoted-pairs do not change its value. Local-part case remains significant.
+func bccMailboxKey(path string) string {
+	inner := path[1 : len(path)-1]
+	if strings.EqualFold(inner, "Postmaster") {
+		return "postmaster"
+	}
+	if strings.HasPrefix(inner, "@") {
+		_, inner, _ = strings.Cut(inner, ":")
+	}
+	at := strings.LastIndexByte(inner, '@')
+	local, domain := inner[:at], strings.ToLower(inner[at+1:])
+	if strings.HasPrefix(domain, "[ipv6:") {
+		// Valid paths have already passed validAddressLiteral. ParseIP unifies
+		// short, expanded, and mixed IPv6 spellings without doing DNS lookups.
+		ip := net.ParseIP(domain[len("[ipv6:") : len(domain)-1])
+		// The unbracketed prefix cannot occur in a DNS name or a general
+		// address literal, so internal mailbox keys cannot collide.
+		domain = "ip:" + ip.String()
+	} else if strings.HasPrefix(domain, "[") && !strings.Contains(domain, ":") {
+		// RFC 5321's IPv4 grammar permits leading zeroes. Interpret its four
+		// already validated decimal components explicitly, never as octal.
+		parts := strings.Split(domain[1:len(domain)-1], ".")
+		var ip [4]byte
+		for i, part := range parts {
+			value, _ := strconv.Atoi(part)
+			ip[i] = byte(value)
+		}
+		domain = "ip:" + net.IP(ip[:]).String()
+	}
+	if local[0] == '"' {
+		local = local[1 : len(local)-1]
+		var unquoted strings.Builder
+		unquoted.Grow(len(local))
+		for i := 0; i < len(local); i++ {
+			if local[i] == '\\' {
+				i++
+			}
+			unquoted.WriteByte(local[i])
+		}
+		local = unquoted.String()
+	}
+	return local + "@" + domain
+}
+
+// Populated blind-recipient fields would reveal addresses in the signed wire
+// message even if its envelope is split correctly. An empty field is allowed.
+func checkBlindRecipientHeaders(headers []string) error {
+	for _, field := range headers {
+		name, _, _ := strings.Cut(field, ":")
+		if !strings.EqualFold(name, "Bcc") && !strings.EqualFold(name, "Resent-Bcc") {
+			continue
+		}
+		unfolded, err := unfold(field)
+		if err != nil {
+			return err
+		}
+		_, value, _ := strings.Cut(unfolded, ":")
+		if strings.Trim(value, " \t") != "" {
+			return errors.New("dkim2: remove populated Bcc and Resent-Bcc fields before signing")
+		}
+	}
+	return nil
 }
 
 func keyAlgorithm(key crypto.Signer) (string, error) {
@@ -334,8 +452,8 @@ func keyAlgorithm(key crypto.Signer) (string, error) {
 	}
 	switch pub := key.Public().(type) {
 	case *rsa.PublicKey:
-		if pub.N.BitLen() < 1024 || pub.E != 65537 {
-			return "", errors.New("dkim2: RSA key must be at least 1024 bits with exponent 65537")
+		if pub == nil || pub.N == nil || pub.N.BitLen() < 1024 || pub.N.BitLen() > maxRSAKeyBits || pub.E != 65537 {
+			return "", errors.New("dkim2: RSA key must be 1024 to 8192 bits with exponent 65537")
 		}
 		return "rsa-sha256", nil
 	case ed25519.PublicKey:

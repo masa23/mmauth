@@ -43,6 +43,16 @@ type Result struct {
 	// They do not change the DKIM2 authentication status.
 	ReplayDetected bool
 	ReplayErr      error
+	// ExplodedAt identifies authenticated hops that claim to have sent more
+	// than one copy. Callers must assess whether those claims are expected;
+	// they never suppress ReplayCheck. It is empty for unauthenticated results.
+	ExplodedAt []ExplodedHop
+}
+
+// ExplodedHop identifies a signer that asserted the exploded flag.
+type ExplodedHop struct {
+	SignatureIndex int
+	Domain         string
 }
 
 // VerifyOptions selects a DNS resolver and evaluation time. By default it
@@ -64,8 +74,9 @@ type VerifyOptions struct {
 	// The result remains PermError and lists bodies that were not authenticated.
 	AllowPartialBody bool
 	// ReplayCheck atomically checks and records a ReplayID. It returns true if
-	// this message was already seen. It is skipped for exploded mail. The
-	// outcome is reported separately from DKIM2 authentication.
+	// this message was already seen. It runs for all fully authenticated mail,
+	// including exploded mail. Use Result.ExplodedAt to assess whether multiple
+	// deliveries are expected. The outcome does not change authentication.
 	ReplayCheck func(string) (bool, error)
 }
 
@@ -105,8 +116,9 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 	replayID := ""
 	var replayDetected bool
 	var replayErr error
+	var explodedAt []ExplodedHop
 	finish := func(status Status, err error) Result {
-		return Result{Status: status, Err: err, UnverifiedBodies: append([]int(nil), unverifiedBodies...), ReplayID: replayID, ReplayDetected: replayDetected, ReplayErr: replayErr}
+		return Result{Status: status, Err: err, UnverifiedBodies: append([]int(nil), unverifiedBodies...), ReplayID: replayID, ReplayDetected: replayDetected, ReplayErr: replayErr, ExplodedAt: append([]ExplodedHop(nil), explodedAt...)}
 	}
 	for i, sig := range m.Signatures {
 		if sig.Timestamp > now.Unix()+24*60*60 || now.Unix()-sig.Timestamp > 14*24*60*60 {
@@ -190,17 +202,13 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 		return finish(PermError, errors.New("dkim2: null body Recipe prevents full verification"))
 	}
 	replayID = firstInstanceReplayID(state, m.Instances[0])
+	for _, sig := range m.Signatures {
+		if hasFlag(sig.Flags, "exploded") {
+			explodedAt = append(explodedAt, ExplodedHop{SignatureIndex: sig.Index, Domain: sig.Domain})
+		}
+	}
 	if options.ReplayCheck != nil {
-		exploded := false
-		for _, sig := range m.Signatures {
-			if hasFlag(sig.Flags, "exploded") {
-				exploded = true
-				break
-			}
-		}
-		if !exploded {
-			replayDetected, replayErr = options.ReplayCheck(replayID)
-		}
+		replayDetected, replayErr = options.ReplayCheck(replayID)
 	}
 	return finish(Pass, nil)
 }
