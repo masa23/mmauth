@@ -50,6 +50,12 @@ type Result struct {
 type VerifyOptions struct {
 	Resolver domainkey.TXTResolver
 	Now      time.Time
+	// MaxDNSLookups limits total key and policy queries for one message.
+	// Zero uses 32. Negative values are invalid.
+	MaxDNSLookups int
+	// DNSBudget limits the total time spent in DNS lookups. Zero uses 15s.
+	// Negative values are invalid.
+	DNSBudget time.Duration
 	// ValidateNextDomain may confirm an out-of-band arrangement for a highest
 	// nd= signature. Such a message remains not fully verified until another
 	// signature records mf= and rt=.
@@ -75,6 +81,9 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 	if err := validateStructure(m); err != nil {
 		return Result{Status: PermError, Err: err}
 	}
+	if options.MaxDNSLookups < 0 || options.DNSBudget < 0 {
+		return Result{Status: PermError, Err: errors.New("dkim2: invalid DNS verification budget")}
+	}
 	now := options.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -83,6 +92,15 @@ func Verify(wire []byte, envelope Envelope, options VerifyOptions) Result {
 	if resolver == nil {
 		resolver = domainkey.NewDefaultTXTResolver()
 	}
+	maxLookups := options.MaxDNSLookups
+	if maxLookups == 0 {
+		maxLookups = maxVerificationDNSLookups
+	}
+	dnsBudget := options.DNSBudget
+	if dnsBudget == 0 {
+		dnsBudget = maxVerificationDNSTime
+	}
+	resolver = &verificationResolver{base: resolver, max: maxLookups, deadline: time.Now().Add(dnsBudget)}
 	var unverifiedBodies []int
 	replayID := ""
 	var replayDetected bool
@@ -450,6 +468,9 @@ func checkSignature(instances []Instance, previous []Signature, sig Signature, r
 		groupErrors := make(map[Status]error)
 		for _, value := range group {
 			status, err := checkOneSignature(input, hash[:], sig, value, resolver)
+			if errors.Is(err, errDNSLookupBudget) {
+				return &statusError{PermError, err}
+			}
 			statuses = append(statuses, status)
 			if err != nil && groupErrors[status] == nil {
 				groupErrors[status] = err

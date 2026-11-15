@@ -131,7 +131,7 @@ func TestDraft09AuthenticFromAfterRevision(t *testing.T) {
 	}
 	modified := bytes.Replace(first, []byte("alice@example.com"), []byte("alice@relay.test"), 1)
 	recipe := []byte(`{"h":{"from":[{"d":[" Alice <alice@example.com>"]}]}}`)
-	wire, err := Revise(modified, recipe, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime})
+	wire, err := revise(modified, recipe, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestDraft09AuthenticFromAfterRevision(t *testing.T) {
 		t.Fatalf("authentic revised From=%s: %v", got.Status, got.Err)
 	}
 	forged := bytes.Replace(first, []byte("alice@example.com"), []byte("alice@evil.test"), 1)
-	if _, err := Revise(forged, recipe, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime}); err == nil {
+	if _, err := revise(forged, recipe, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime}); err == nil {
 		t.Fatal("unrelated revised From was signed")
 	}
 }

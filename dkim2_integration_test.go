@@ -229,7 +229,56 @@ func TestDKIM2OptInEnvelopeMismatchIsSeparateFailure(t *testing.T) {
 		t.Fatalf("mismatched envelope state = %+v", got)
 	}
 	results := m.GetAuthenticationHeader(nil, "", "")
-	if countDKIM2AuthResults(results) != 1 || results[len(results)-1] != "dkim2=fail" {
+	if countDKIM2AuthResults(results) != 1 || !strings.HasPrefix(results[len(results)-1], "dkim2=fail (") {
 		t.Fatalf("Authentication-Results = %v", results)
+	}
+}
+
+func TestDKIM2StillVerifiesWhenUnsignedDKIMHeaderIsMalformed(t *testing.T) {
+	wire, envelope, resolver, when := dkim2TestMessage(t)
+	wire = append([]byte("DKIM-Signature: invalid\r\n"), wire...)
+	options := dkim2.VerifyOptions{Resolver: resolver, Now: when}
+	if direct := dkim2.Verify(wire, envelope, options); direct.Status != dkim2.Pass {
+		t.Fatalf("direct DKIM2 verification=%s: %v", direct.Status, direct.Err)
+	}
+	legacy := NewMMAuth()
+	if _, err := legacy.Write(wire); err != nil {
+		t.Fatal(err)
+	}
+	legacyCloseErr := legacy.Close()
+	if legacyCloseErr == nil {
+		t.Fatal("legacy malformed DKIM header was accepted")
+	}
+	legacy.Verify()
+	if got := legacy.GetDKIM2Verification(); got.Enabled || got.Checked || got.Err != nil {
+		t.Fatalf("legacy DKIM2 state=%+v", got)
+	}
+	m, err := NewMMAuthWithOptions(MMAuthOptions{EnableDKIM2: true, DKIM2Envelope: envelope, DKIM2VerifyOptions: options})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Write(wire); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Close(); err == nil || err.Error() != legacyCloseErr.Error() {
+		t.Fatalf("malformed DKIM Close error changed: enabled=%v legacy=%v", err, legacyCloseErr)
+	}
+	m.Verify()
+	state := m.GetDKIM2Verification()
+	if !state.Checked || state.Result.Status != dkim2.Pass || state.Err != nil {
+		t.Fatalf("DKIM2 state=%+v", state)
+	}
+	results := m.GetAuthenticationHeader(nil, "", "")
+	if len(results) != 1 || results[0] != "dkim2=pass" {
+		t.Fatalf("Authentication-Results=%v", results)
+	}
+}
+
+func TestDKIM2AuthenticationCommentEscapesUntrustedText(t *testing.T) {
+	result := dkim2.Result{Status: dkim2.Fail, Err: errors.New("bad)\r\nInjected: pass (\\" + strings.Repeat("x", 300))}
+	got := dkim2AuthenticationResult(result)
+	if !strings.HasPrefix(got, "dkim2=fail (") || strings.ContainsAny(got, "\r\n") ||
+		!strings.Contains(got, "\\)") || !strings.Contains(got, "\\(") || !strings.Contains(got, "\\\\") || len(got) > 210 {
+		t.Fatalf("unsafe DKIM2 Authentication-Results comment: %q", got)
 	}
 }

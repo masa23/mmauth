@@ -145,6 +145,11 @@ func (m *MMAuth) parsedMail() {
 	m.AuthenticationHeaders, err = parseAuthentications(m.Headers)
 	if err != nil {
 		m.err = fmt.Errorf("failed to parse auth headers: %v", err)
+		if m.dkim2 != nil && !m.dkim2.skipped && !m.dkim2.overflow {
+			// DKIM-Signature and ARC fields are unsigned by DKIM2. Keep
+			// capturing the body so their syntax cannot suppress DKIM2.
+			_, _ = io.Copy(io.Discard, buf)
+		}
 		return
 	}
 
@@ -301,6 +306,7 @@ func (m *MMAuth) Close() error {
 // Verifyは付与されているDKIM・ARCの署名を検証する。DKIM2は有効時のみ検証する。
 func (m *MMAuth) Verify() {
 	if m.AuthenticationHeaders == nil {
+		m.verifyDKIM2()
 		return
 	}
 	if m.AuthenticationHeaders.DKIMSignatures != nil {
@@ -360,6 +366,9 @@ func evaluateSPF(remoteAddr net.IP, helo, mailFrom string) *spf.Result {
 // GetAuthenticationHeaderは認証結果を配列形式で返す。
 func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom string) []string {
 	if m.AuthenticationHeaders == nil {
+		if m.dkim2 != nil && m.dkim2.state.Checked {
+			return []string{dkim2AuthenticationResult(m.dkim2.state.Result)}
+		}
 		return nil
 	}
 	// SPFチェックを行う
@@ -387,7 +396,7 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 		results = append(results, arcSigns.GetVerifyResultString())
 	}
 	if m.dkim2 != nil && m.dkim2.state.Checked {
-		results = append(results, "dkim2="+string(m.dkim2.state.Result.Status))
+		results = append(results, dkim2AuthenticationResult(m.dkim2.state.Result))
 	}
 
 	return results

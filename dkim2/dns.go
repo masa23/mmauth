@@ -15,6 +15,38 @@ import (
 	"github.com/masa23/mmauth/domainkey"
 )
 
+const maxVerificationDNSLookups = 32
+const maxVerificationDNSTime = 15 * time.Second
+
+var errDNSLookupBudget = errors.New("dkim2: DNS lookup limit exceeded")
+
+// verificationResolver applies one budget to all signature and policy lookups
+// for a message. Per-query timeouts alone let a long s= list monopolize a
+// verifier for many minutes.
+type verificationResolver struct {
+	base     domainkey.TXTResolver
+	lookups  int
+	max      int
+	deadline time.Time
+}
+
+func (r *verificationResolver) LookupTXT(ctx context.Context, name string) ([]string, error) {
+	if r.lookups >= r.max {
+		return nil, errDNSLookupBudget
+	}
+	r.lookups++
+	ctx, cancel := context.WithDeadline(ctx, r.deadline)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	records, err := r.base.LookupTXT(ctx, name)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return records, err
+}
+
 // selectTXTRecord implements the version filtering shared by key and policy
 // records. Other versions coexist at a DNS name and are ignored.
 func selectTXTRecord(records []string, requireVersion bool) (string, error) {
@@ -22,10 +54,10 @@ func selectTXTRecord(records []string, requireVersion bool) (string, error) {
 	for _, raw := range records {
 		first := strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
 		name, value, hasTag := strings.Cut(first, "=")
-		if hasTag && strings.EqualFold(strings.TrimSpace(name), "v") && strings.TrimSpace(value) != "DKIM1" {
+		if hasTag && strings.TrimSpace(name) == "v" && strings.TrimSpace(value) != "DKIM1" {
 			continue
 		}
-		if requireVersion && (!hasTag || !strings.EqualFold(strings.TrimSpace(name), "v")) {
+		if requireVersion && (!hasTag || strings.TrimSpace(name) != "v") {
 			continue
 		}
 		if selected != "" {
@@ -53,8 +85,8 @@ func parseTXTTags(raw string) (map[string]string, error) {
 			continue
 		}
 		name, value, ok := strings.Cut(part, "=")
-		name = strings.ToLower(strings.TrimSpace(name))
-		if !ok || !validTag(name) {
+		name = strings.TrimSpace(name)
+		if !ok || !validTag(strings.ToLower(name)) {
 			return nil, errors.New("malformed or duplicate DNS tag")
 		}
 		if _, exists := tags[name]; exists {
@@ -70,6 +102,9 @@ func lookupTXT(resolver domainkey.TXTResolver, name string, missingOK bool) (str
 	defer cancel()
 	records, err := resolver.LookupTXT(ctx, name)
 	if err != nil {
+		if errors.Is(err, errDNSLookupBudget) {
+			return "", &permanentKeyError{err}
+		}
 		var dnsErr *net.DNSError
 		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			if missingOK {
@@ -101,7 +136,8 @@ func lookupKey(resolver domainkey.TXTResolver, domain, selector, algorithm strin
 	}
 	if version, ok := tags["v"]; ok {
 		first := strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
-		if version != "DKIM1" || !strings.HasPrefix(strings.ToLower(first), "v") {
+		firstTagName, _, hasTag := strings.Cut(first, "=")
+		if version != "DKIM1" || !hasTag || strings.TrimSpace(firstTagName) != "v" {
 			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: invalid key version at %s", name)}
 		}
 	}
@@ -142,6 +178,12 @@ func lookupKey(resolver domainkey.TXTResolver, domain, selector, algorithm strin
 		}
 		if err != nil || pub == nil {
 			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s invalid RSA public key", name)}
+		}
+		if pub.N.BitLen() < 1024 {
+			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s RSA public key is shorter than 1024 bits", name)}
+		}
+		if pub.E != 65537 {
+			return keyData{}, &permanentKeyError{fmt.Errorf("dkim2: key %s RSA public exponent must be 65537", name)}
 		}
 		return keyData{public: pub}, nil
 	}

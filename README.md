@@ -45,6 +45,8 @@ outcome := m.GetDKIM2Verification()
 
 Only enabled messages with DKIM2 fields are kept in memory, up to 32 MiB by default. Set `DKIM2MaxMessageBytes` to change the limit. Exceeding it does not stop the existing DKIM or ARC processing. `GetAuthenticationHeader` adds `dkim2=...` only after DKIM2 was checked. Outgoing DKIM2 signing remains an explicit call to `dkim2.Sign`, `dkim2.ForwardChecked`, or `dkim2.ReviseChecked`.
 
+DKIM2 verification allows 32 DNS lookups and 15 seconds of DNS time per message by default; `dkim2.VerifyOptions.MaxDNSLookups` and `DNSBudget` can adjust these limits. `Forward` and `Revise` require `SignOptions.OutOfBandArrangement = true` for an explicit arrangement that permits signing without verifying the incoming chain. Use `ForwardChecked` and `ReviseChecked` for ordinary forwarding. A malformed DKIM or ARC header still causes the existing `Close` error; after `Close`, `Verify` can independently report DKIM2 when its complete input was captured.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

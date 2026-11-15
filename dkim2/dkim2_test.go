@@ -213,7 +213,7 @@ func TestForwardAndRevise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forwarded, err := Forward(initial, SignOptions{Domain: "relay.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime.Add(time.Minute)})
+	forwarded, err := forward(initial, SignOptions{Domain: "relay.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime.Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestForwardAndRevise(t *testing.T) {
 	modified := bytes.Replace(initial, []byte("Subject: original"), []byte("Subject: revised"), 1)
 	modified = append(modified, []byte("footer\r\n")...)
 	recipe := []byte(`{"h":{"subject":[{"d":[" original"]}]},"b":[{"c":[1,1]}]}`)
-	revised, err := Revise(modified, recipe, SignOptions{Domain: "relay.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime.Add(time.Minute)})
+	revised, err := revise(modified, recipe, SignOptions{Domain: "relay.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime.Add(time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestForwardAndRevise(t *testing.T) {
 	thirdEnvelope := Envelope{"<bounce@example.net>", []string{"<dest@example.net>"}}
 	resolver["s3._domainkey.example.net"] = []string{keyRecord(first)}
 	modifiedAgain := append(append([]byte(nil), revised...), []byte("footer2\r\n")...)
-	twice, err := Revise(modifiedAgain, []byte(`{"b":[{"c":[1,2]}]}`), SignOptions{Domain: "example.net", Selector: "s3", Key: first, Envelope: thirdEnvelope, Timestamp: testTime.Add(2 * time.Minute)})
+	twice, err := revise(modifiedAgain, []byte(`{"b":[{"c":[1,2]}]}`), SignOptions{Domain: "example.net", Selector: "s3", Key: first, Envelope: thirdEnvelope, Timestamp: testTime.Add(2 * time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,10 +253,10 @@ func TestForwardAndRevise(t *testing.T) {
 	if r := Verify(broken, out, options); r.Status != Fail {
 		t.Fatalf("revised mutation=%s: %v", r.Status, r.Err)
 	}
-	if _, err := Revise(modified, []byte(`{"b":null}`), SignOptions{Domain: "relay.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime}); err == nil {
+	if _, err := revise(modified, []byte(`{"b":null}`), SignOptions{Domain: "relay.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime}); err == nil {
 		t.Fatal("null Recipe signed without validating previous content")
 	}
-	if _, err := Forward(initial, SignOptions{Domain: "other.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime}); err == nil {
+	if _, err := forward(initial, SignOptions{Domain: "other.test", Selector: "s2", Key: second, Envelope: out, Timestamp: testTime}); err == nil {
 		t.Fatal("broken custody accepted")
 	}
 }
@@ -297,7 +297,7 @@ func TestMalformedFieldsAndDNSErrors(t *testing.T) {
 	if _, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s", Key: key, Envelope: Envelope{"<alice@evil.test>", env.RcptTo}}); err == nil {
 		t.Fatal("unmatched domain signed")
 	}
-	if _, err := Revise(wire, []byte(`{"b":[{"c":[2,1]}]}`), SignOptions{Domain: "relay.test", Selector: "s", Key: key, Envelope: Envelope{"<bounce@relay.test>", []string{"<x@example.net>"}}}); err == nil {
+	if _, err := revise(wire, []byte(`{"b":[{"c":[2,1]}]}`), SignOptions{Domain: "relay.test", Selector: "s", Key: key, Envelope: Envelope{"<bounce@relay.test>", []string{"<x@example.net>"}}}); err == nil {
 		t.Fatal("invalid Recipe accepted")
 	}
 }
@@ -370,7 +370,7 @@ func TestNullReversePathCannotSkipCustody(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondOptions := SignOptions{Domain: "unrelated.test", Selector: "s2", Key: key, Envelope: secondEnvelope, Timestamp: testTime}
-	if _, err := Forward(first, secondOptions); err == nil {
+	if _, err := forward(first, secondOptions); err == nil {
 		t.Fatal("null reverse path bypassed custody when forwarding")
 	}
 	parsed, err := Parse(first)
@@ -470,7 +470,7 @@ func TestNextDomainImaginaryHop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	imaginary, err := Forward(first, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, NextDomain: "external.test", Timestamp: testTime})
+	imaginary, err := forward(first, SignOptions{Domain: "relay.test", Selector: "s2", Key: key, NextDomain: "external.test", Timestamp: testTime})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,14 +496,14 @@ func TestNextDomainImaginaryHop(t *testing.T) {
 		t.Fatalf("denied nd= arrangement=%s: %v", r.Status, r.Err)
 	}
 	out := Envelope{"<sender@external.test>", []string{"<dest@example.net>"}}
-	forwarded, err := Forward(imaginary, SignOptions{Domain: "external.test", Selector: "s3", Key: key, Envelope: out, Timestamp: testTime})
+	forwarded, err := forward(imaginary, SignOptions{Domain: "external.test", Selector: "s3", Key: key, Envelope: out, Timestamp: testTime})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r := Verify(forwarded, out, VerifyOptions{Resolver: resolver, Now: testTime}); r.Status != Pass {
 		t.Fatalf("completed nd= chain=%s: %v", r.Status, r.Err)
 	}
-	if _, err := Forward(imaginary, SignOptions{Domain: "wrong.test", Selector: "s3", Key: key, Envelope: Envelope{"<sender@wrong.test>", out.RcptTo}, Timestamp: testTime}); err == nil {
+	if _, err := forward(imaginary, SignOptions{Domain: "wrong.test", Selector: "s3", Key: key, Envelope: Envelope{"<sender@wrong.test>", out.RcptTo}, Timestamp: testTime}); err == nil {
 		t.Fatal("nd= accepted the wrong next signer")
 	}
 }
@@ -519,11 +519,11 @@ func TestNullBodyRecipeRequiresExplicitPartialVerification(t *testing.T) {
 	}
 	modified := append(append([]byte(nil), initial...), []byte("footer\r\n")...)
 	options := SignOptions{Domain: "relay.test", Selector: "s2", Key: key, Envelope: out, Timestamp: testTime}
-	if _, err := Revise(modified, []byte(`{"b":null}`), options); err == nil {
+	if _, err := revise(modified, []byte(`{"b":null}`), options); err == nil {
 		t.Fatal("null body Recipe accepted without explicit option")
 	}
 	options.AllowNullBodyRecipe = true
-	revised, err := Revise(modified, []byte(`{"b":null}`), options)
+	revised, err := revise(modified, []byte(`{"b":null}`), options)
 	if err != nil {
 		t.Fatal(err)
 	}

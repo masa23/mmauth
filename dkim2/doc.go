@@ -11,7 +11,8 @@
 // A highest-numbered nd= signature requires an out-of-band validator callback.
 // DKIM2 ignores deprecated DNS key tags h=, n=, s= and t=.
 // ForwardChecked and ReviseChecked verify incoming messages before adding a
-// hop; Forward and Revise only check hashes and custody, not prior DNS keys.
+// hop. Forward and Revise require OutOfBandArrangement because they only check
+// hashes and custody, not prior DNS keys.
 // Verify can call an MTA-owned replay store after authentication. Replay
 // storage, delivery policy and DSN handling belong to the MTA.
 // This API consumes the complete message in memory.

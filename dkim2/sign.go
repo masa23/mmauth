@@ -34,6 +34,10 @@ type SignOptions struct {
 	// AllowNullBodyRecipe explicitly allows Revise to use b:null. The caller
 	// must have authenticated the incoming message before changing its body.
 	AllowNullBodyRecipe bool
+	// OutOfBandArrangement explicitly asserts an arrangement that permits
+	// signing an incoming message without verifying its prior signatures here.
+	// ForwardChecked and ReviseChecked authenticate the incoming message instead.
+	OutOfBandArrangement bool
 }
 
 // Sign adds the first Message-Instance and DKIM2-Signature fields.
@@ -85,10 +89,17 @@ func Sign(wire []byte, options SignOptions) ([]byte, error) {
 	return out, nil
 }
 
-// Forward adds a signature for an unchanged message instance. Call Verify on
-// the incoming message before forwarding it; Forward cannot authenticate the
-// existing signatures without the sender's DNS keys.
+// Forward adds a signature for an unchanged message instance only when the
+// caller explicitly asserts an out-of-band arrangement. Otherwise use
+// ForwardChecked to authenticate the incoming message first.
 func Forward(wire []byte, options SignOptions) ([]byte, error) {
+	if !options.OutOfBandArrangement {
+		return nil, errors.New("dkim2: Forward requires ForwardChecked or an explicit out-of-band arrangement")
+	}
+	return forward(wire, options)
+}
+
+func forward(wire []byte, options SignOptions) ([]byte, error) {
 	m, err := Parse(wire)
 	if err != nil {
 		return nil, err
@@ -126,13 +137,22 @@ func ForwardChecked(wire []byte, incoming Envelope, verification VerifyOptions, 
 	if err := verifyBeforeForwarding(wire, incoming, verification); err != nil {
 		return nil, err
 	}
-	return Forward(wire, options)
+	return forward(wire, options)
 }
 
-// Revise signs a modified message and records a JSON Recipe that reconstructs
-// the previous instance. The input must retain the prior DKIM2 fields. The
-// Recipe is checked against the previous hash before a new signature is made.
+// Revise signs a modified message under an explicit out-of-band arrangement.
+// Otherwise use ReviseChecked to authenticate the original message first.
 func Revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error) {
+	if !options.OutOfBandArrangement {
+		return nil, errors.New("dkim2: Revise requires ReviseChecked or an explicit out-of-band arrangement")
+	}
+	return revise(wire, recipeJSON, options)
+}
+
+// revise records a JSON Recipe that reconstructs the previous instance. The
+// input must retain the prior DKIM2 fields. The Recipe is checked against the
+// previous hash before a new signature is made.
+func revise(wire []byte, recipeJSON []byte, options SignOptions) ([]byte, error) {
 	m, err := Parse(wire)
 	if err != nil {
 		return nil, err
@@ -229,7 +249,7 @@ func ReviseChecked(original, modified []byte, incoming Envelope, verification Ve
 			return nil, errors.New("dkim2: modified message changed prior DKIM2-Signature field")
 		}
 	}
-	return Revise(modified, recipeJSON, options)
+	return revise(modified, recipeJSON, options)
 }
 
 func verifyBeforeForwarding(wire []byte, incoming Envelope, verification VerifyOptions) error {

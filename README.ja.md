@@ -45,6 +45,8 @@ outcome := m.GetDKIM2Verification()
 
 DKIM2は受信メールの生データ全体を使います。有効時のみ、DKIM2フィールドがあるメールを最大32 MiBまでメモリに保持します。`DKIM2MaxMessageBytes`で上限を変更できます。上限を超えても従来のDKIM・ARC検証は継続します。`GetAuthenticationHeader`には、DKIM2を実際に検証した場合のみ`dkim2=...`が追加されます。送信時のDKIM2署名は`dkim2`パッケージの`Sign`、`ForwardChecked`、`ReviseChecked`を明示的に使用してください。
 
+DKIM2検証では、メール1通につきDNS照会32回、DNS処理15秒を既定の上限とします。`dkim2.VerifyOptions.MaxDNSLookups`と`DNSBudget`で調整できます。受信した署名を検証せずに追加署名する取り決めがある場合に限り、`Forward`・`Revise`で`SignOptions.OutOfBandArrangement = true`を指定します。通常の転送には`ForwardChecked`・`ReviseChecked`を使用します。不正なDKIM・ARCヘッダーに対する従来の`Close`エラーは維持されますが、メール全体を保持できた場合は、その後`Verify`を呼ぶことでDKIM2の結果を独立して取得できます。
+
 ## ライセンス
 
 このプロジェクトは MIT ライセンスのもとで公開されています。詳細は [LICENSE](LICENSE) ファイルをご覧ください。

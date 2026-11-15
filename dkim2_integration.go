@@ -138,3 +138,36 @@ func (m *MMAuth) GetDKIM2Verification() DKIM2Verification {
 	state.Result.UnverifiedBodies = append([]int(nil), state.Result.UnverifiedBodies...)
 	return state
 }
+
+// Authentication-Results comments can contain attacker-controlled paths and
+// resolver errors. Keep them short and within RFC 5322 comment syntax.
+func dkim2AuthenticationResult(result dkim2.Result) string {
+	value := "dkim2=" + string(result.Status)
+	if result.Err == nil || result.Status == dkim2.Pass || result.Status == dkim2.None {
+		return value
+	}
+	var comment strings.Builder
+	for _, c := range result.Err.Error() {
+		if c == '\r' || c == '\n' || c == '\t' {
+			c = ' '
+		} else if c < 32 || c > 126 {
+			c = '?'
+		}
+		need := 1
+		if c == '(' || c == ')' || c == '\\' {
+			need++
+		}
+		if comment.Len()+need > 180 {
+			comment.WriteString("...")
+			break
+		}
+		if need == 2 {
+			comment.WriteByte('\\')
+		}
+		comment.WriteByte(byte(c))
+	}
+	if comment.Len() == 0 {
+		return value
+	}
+	return value + " (" + comment.String() + ")"
+}

@@ -213,7 +213,9 @@ func TestDraftDNSKeyRules(t *testing.T) {
 		{"revoked", "v=DKIM1; k=ed25519; p=", PermError},
 		{"wrong key algorithm", strings.Replace(valid, "k=ed25519", "k=rsa", 1), PermError},
 		{"duplicate p tag", valid + "; p=bogus", PermError},
+		{"uppercase P is not p", strings.Replace(valid, "; p=", "; P=", 1), PermError},
 		{"version not first", strings.Replace(valid, "v=DKIM1; k=ed25519", "k=ed25519; v=DKIM1", 1), PermError},
+		{"version after similarly named tag", "version=anything; " + valid, PermError},
 		{"invalid version", strings.Replace(valid, "v=DKIM1", "v=DKIM2", 1), PermError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
