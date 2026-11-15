@@ -21,6 +21,30 @@ go get github.com/masa23/mmauth
 
 * [arcmilter](https://github.com/masa23/arcmilter) is a milter implementation that uses this library.
 
+### Opt in to DKIM2 verification
+
+`NewMMAuth()` keeps DKIM2 disabled. Enable it for an SMTP transaction with the actual envelope paths:
+
+```go
+m, err := mmauth.NewMMAuthWithOptions(mmauth.MMAuthOptions{
+    EnableDKIM2: true,
+    DKIM2Envelope: dkim2.Envelope{
+        MailFrom: "<alice@example.com>",
+        RcptTo:   []string{"<bob@example.net>"},
+    },
+})
+if err != nil { /* configuration error */ }
+_, err = m.Write(rawMessage) // Original message bytes from SMTP.
+if err != nil { /* write error */ }
+if err := m.Close(); err != nil { /* input error */ }
+m.Verify()
+outcome := m.GetDKIM2Verification()
+// Check outcome.Result.Status when outcome.Checked is true.
+// outcome.Err reports local errors such as the capture limit.
+```
+
+Only enabled messages with DKIM2 fields are kept in memory, up to 32 MiB by default. Set `DKIM2MaxMessageBytes` to change the limit. Exceeding it does not stop the existing DKIM or ARC processing. `GetAuthenticationHeader` adds `dkim2=...` only after DKIM2 was checked. Outgoing DKIM2 signing remains an explicit call to `dkim2.Sign`, `dkim2.ForwardChecked`, or `dkim2.ReviseChecked`.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
