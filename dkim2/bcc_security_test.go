@@ -108,6 +108,50 @@ func TestBCCMailboxSpellingsCannotBypassClassification(t *testing.T) {
 	}
 }
 
+// RFC 5321 Section 4.1.1.3 makes Postmaster case insensitive even when a
+// domain is present. This exception applies after mailbox quote decoding.
+func TestBCCPostmasterSpellingsCannotBypassClassification(t *testing.T) {
+	for _, recipient := range []string{
+		"<Postmaster@destination.test>",
+		"<POSTMASTER@DESTINATION.test>",
+		`<"Postmaster"@destination.test>`,
+		`<"Po\stmaster"@destination.test>`,
+		"<@relay.test:Postmaster@destination.test>",
+	} {
+		t.Run(recipient, func(t *testing.T) {
+			options := SignOptions{Domain: "example.com", Selector: "s1", Key: edKey(), Envelope: Envelope{
+				MailFrom: "<alice@example.com>", RcptTo: []string{recipient, "<visible@destination.test>"},
+			}, Timestamp: testTime, BCCRecipients: []string{"<postmaster@destination.test>"}}
+			if wire, err := Sign(original(), options); err == nil || wire != nil {
+				t.Fatal("Postmaster case variant exposed a BCC recipient")
+			}
+			options.Envelope.RcptTo = []string{recipient, "<other-blind@destination.test>"}
+			options.BCCRecipients = append(options.BCCRecipients, "<other-blind@destination.test>")
+			if _, err := Sign(original(), options); err != nil {
+				t.Fatalf("all-BCC copy rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestBCCPostmasterDomainsRemainDistinct(t *testing.T) {
+	options := SignOptions{Domain: "example.com", Selector: "s1", Key: edKey(), Envelope: Envelope{
+		MailFrom: "<alice@example.com>", RcptTo: []string{"<Postmaster@destination.test>", "<postmaster@other.test>"},
+	}, Timestamp: testTime, BCCRecipients: []string{"<postmaster@destination.test>"}}
+	if wire, err := Sign(original(), options); err == nil || wire != nil {
+		t.Fatal("Postmaster at different domains was merged, exposing a BCC recipient")
+	}
+}
+
+func TestBCCPostmasterCaseExceptionIsASCIIOnly(t *testing.T) {
+	options := SignOptions{Domain: "example.com", Selector: "s1", Key: edKey(), Envelope: Envelope{
+		MailFrom: "<alice@example.com>", RcptTo: []string{"<postmaster@destination.test>", "<poſtmaster@destination.test>"},
+	}, Timestamp: testTime, BCCRecipients: []string{"<postmaster@destination.test>"}}
+	if wire, err := Sign(original(), options); err == nil || wire != nil {
+		t.Fatal("Unicode local part was treated as reserved Postmaster, exposing a BCC recipient")
+	}
+}
+
 func TestBCCProtectionAppliesToForwardAndRevise(t *testing.T) {
 	key := edKey()
 	in := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}

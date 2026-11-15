@@ -382,10 +382,11 @@ func normalizeSignOptions(options SignOptions) (SignOptions, error) {
 // bccMailboxKey compares validated, IDNA-normalized recipient paths by mailbox
 // identity, not the exact SMTP spelling that DKIM2 authenticates. Source routes
 // do not change the destination mailbox, and optional local-part quoting and
-// quoted-pairs do not change its value. Local-part case remains significant.
+// quoted-pairs do not change its value. Local-part case remains significant
+// except for the reserved Postmaster mailbox (RFC 5321, Section 4.1.1.3).
 func bccMailboxKey(path string) string {
 	inner := path[1 : len(path)-1]
-	if strings.EqualFold(inner, "Postmaster") {
+	if isPostmaster(inner) {
 		return "postmaster"
 	}
 	if strings.HasPrefix(inner, "@") {
@@ -422,6 +423,10 @@ func bccMailboxKey(path string) string {
 			unquoted.WriteByte(local[i])
 		}
 		local = unquoted.String()
+	}
+	// Only the ASCII reserved name receives SMTP's case exception.
+	if isPostmaster(local) {
+		local = "postmaster"
 	}
 	return local + "@" + domain
 }

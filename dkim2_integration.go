@@ -136,6 +136,7 @@ func (m *MMAuth) GetDKIM2Verification() DKIM2Verification {
 	}
 	state := m.dkim2.state
 	state.Result.UnverifiedBodies = append([]int(nil), state.Result.UnverifiedBodies...)
+	state.Result.ExplodedAt = append([]dkim2.ExplodedHop(nil), state.Result.ExplodedAt...)
 	return state
 }
 

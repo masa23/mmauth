@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sort"
@@ -335,7 +336,7 @@ func equalPath(a, b string) bool {
 
 func normalizedPath(p string) string {
 	inner := p[1 : len(p)-1]
-	if strings.EqualFold(inner, "Postmaster") {
+	if isPostmaster(inner) {
 		return "<postmaster>"
 	}
 	if strings.HasPrefix(inner, "@") {
@@ -502,10 +503,33 @@ func checkSignature(instances []Instance, previous []Signature, sig Signature, r
 }
 
 func checkOneSignature(input, hash []byte, sig Signature, value SignatureValue, resolver domainkey.TXTResolver) (Status, error) {
+	maxSignatureBytes := 0
+	lengthStatus := Fail
 	switch value.Algorithm {
-	case "rsa-sha256", "ed25519-sha256", "mldsa44":
+	case "rsa-sha256":
+		maxSignatureBytes = maxRSASignatureBytes
+		lengthStatus = PermError // Local RSA resource policy, not invalid syntax.
+	case "ed25519-sha256":
+		maxSignatureBytes = ed25519.SignatureSize
+	case "mldsa44":
+		maxSignatureBytes = mldsa44.SignatureSize
 	default:
 		return PermError, fmt.Errorf("dkim2: DKIM2-Signature i=%d selector %s algorithm unknown", sig.Index, value.Selector)
+	}
+	lengthError := fmt.Errorf("dkim2: DKIM2-Signature i=%d selector %s signature violates %s length limit", sig.Index, value.Selector, value.Algorithm)
+	encoded := stripWSP(value.Value)
+	// Do not allocate oversized decoded signatures or fetch DNS for values
+	// that cannot pass. This is an individual result so sig-any alternatives
+	// remain usable, as required by draft-09 section 14.6.
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxSignatureBytes) {
+		return lengthStatus, lengthError
+	}
+	decoded, err := b64(encoded)
+	if err != nil {
+		return PermError, err
+	}
+	if len(decoded) > maxSignatureBytes || value.Algorithm != "rsa-sha256" && len(decoded) != maxSignatureBytes {
+		return lengthStatus, lengthError
 	}
 	key, err := lookupKey(resolver, sig.Domain, value.Selector, value.Algorithm)
 	if err != nil {
@@ -513,10 +537,6 @@ func checkOneSignature(input, hash []byte, sig Signature, value SignatureValue, 
 		if errors.As(err, &temporary) {
 			return TempError, err
 		}
-		return PermError, err
-	}
-	decoded, err := b64(value.Value)
-	if err != nil {
 		return PermError, err
 	}
 	valid := false

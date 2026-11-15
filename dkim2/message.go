@@ -2,7 +2,6 @@ package dkim2
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -13,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 )
 
 // Envelope contains the SMTP paths, including angle brackets and without
@@ -419,30 +416,11 @@ func parseSignature(raw string) (Signature, error) {
 				return Signature{}, errors.New("dkim2: invalid or duplicate selector")
 			}
 			seen[selector] = true
-			maxSignatureBytes := 0
-			switch algo {
-			case "rsa-sha256":
-				maxSignatureBytes = maxRSASignatureBytes
-			case "ed25519-sha256":
-				maxSignatureBytes = ed25519.SignatureSize
-			case "mldsa44":
-				maxSignatureBytes = mldsa44.SignatureSize
-			}
-			if maxSignatureBytes > 0 && len(value) > base64.StdEncoding.EncodedLen(maxSignatureBytes) {
-				return Signature{}, errors.New("dkim2: signature exceeds algorithm size limit")
-			}
-			decoded, err := b64(value)
-			if err != nil {
+			// Length and algorithm policy are individual verification results,
+			// not header syntax errors: another sig-any group may still pass.
+			// The parser's field limit bounds this syntax-validation allocation.
+			if _, err := b64(value); err != nil {
 				return Signature{}, fmt.Errorf("dkim2: invalid signature base64: %w", err)
-			}
-			if algo == "ed25519-sha256" && len(decoded) != ed25519.SignatureSize {
-				return Signature{}, errors.New("dkim2: incorrect Ed25519 signature length")
-			}
-			if algo == "mldsa44" && len(decoded) != mldsa44.SignatureSize {
-				return Signature{}, errors.New("dkim2: incorrect ML-DSA-44 signature length")
-			}
-			if algo == "rsa-sha256" && len(decoded) > maxRSASignatureBytes {
-				return Signature{}, errors.New("dkim2: RSA signature exceeds 8192 bits")
 			}
 			set := SignatureValue{selector, algo, value}
 			sig.Values = append(sig.Values, set)
@@ -483,6 +461,11 @@ func validDomain(s string) bool {
 	return true
 }
 
+// Postmaster is an ASCII SMTP keyword, not a Unicode case-folded mailbox.
+func isPostmaster(s string) bool {
+	return len(s) == len("Postmaster") && strings.EqualFold(s, "Postmaster")
+}
+
 func validPath(p string, nullOK bool) bool {
 	if p == "<>" {
 		return nullOK
@@ -491,7 +474,7 @@ func validPath(p string, nullOK bool) bool {
 		return false
 	}
 	inner := p[1 : len(p)-1]
-	if !nullOK && strings.EqualFold(inner, "Postmaster") {
+	if !nullOK && isPostmaster(inner) {
 		return true
 	}
 	if strings.HasPrefix(inner, "@") {

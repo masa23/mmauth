@@ -18,8 +18,22 @@ func asciiDomain(domain string) (string, error) {
 	if len(domain) > 4*253 || !utf8.ValidString(domain) {
 		return "", invalid
 	}
-	domain = strings.ToLower(domain)
-	for _, label := range strings.Split(domain, ".") {
+	labels := strings.Split(domain, ".")
+	for i, label := range labels {
+		// RFC 5891 section 3.1: DNS A-labels compare as caseless ASCII,
+		// while U-labels must be used as-is. Unicode simple lowercasing can
+		// discard information (for example U+0130 becomes ASCII i).
+		ascii := true
+		for j := 0; j < len(label); j++ {
+			if label[j] >= utf8.RuneSelf {
+				ascii = false
+				break
+			}
+		}
+		if ascii {
+			label = strings.ToLower(label)
+			labels[i] = label
+		}
 		// An ASCII-only Punycode payload ends in '-'. Older x/net versions
 		// decode it into an unrelated ASCII DNS label instead of rejecting it
 		// (GO-2026-5026). Validate ACE syntax before any Punycode decoding.
@@ -27,7 +41,7 @@ func asciiDomain(domain string) (string, error) {
 			return "", invalid
 		}
 	}
-	ascii, err := smtpIDNA.ToASCII(domain)
+	ascii, err := smtpIDNA.ToASCII(strings.Join(labels, "."))
 	if err != nil || !validDomain(ascii) {
 		return "", invalid
 	}
@@ -43,7 +57,7 @@ func normalizePath(path string) (string, error) {
 	if len(path) < 3 || path[0] != '<' || path[len(path)-1] != '>' || strings.ContainsAny(path, "\r\n\x00") {
 		return "", errors.New("dkim2: invalid SMTP path")
 	}
-	if strings.EqualFold(path, "<Postmaster>") {
+	if isPostmaster(path[1 : len(path)-1]) {
 		return path, nil
 	}
 	inner := path[1 : len(path)-1]

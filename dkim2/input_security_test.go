@@ -1,7 +1,6 @@
 package dkim2
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"strings"
@@ -61,29 +60,24 @@ func TestParseResourceLimits(t *testing.T) {
 }
 
 func TestSignatureLimitsBeforeDecoding(t *testing.T) {
-	env := Envelope{"<alice@example.com>", []string{"<bob@relay.test>"}}
-	wire, err := Sign(original(), SignOptions{Domain: "example.com", Selector: "s1", Key: edKey(), Envelope: env, Timestamp: testTime})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := Parse(wire)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := "ed25519-sha256:" + foldBase64(m.Signatures[0].Values[0].Value)
 	for _, test := range []struct {
 		algorithm string
 		size      int
+		want      Status
 	}{
-		{"rsa-sha256", maxRSASignatureBytes},
-		{"ed25519-sha256", ed25519.SignatureSize},
-		{"mldsa44", mldsa44.SignatureSize},
+		{"rsa-sha256", maxRSASignatureBytes, PermError},
+		{"ed25519-sha256", ed25519.SignatureSize, Fail},
+		{"mldsa44", mldsa44.SignatureSize, Fail},
 	} {
 		t.Run(test.algorithm, func(t *testing.T) {
-			value := base64.StdEncoding.EncodeToString(make([]byte, test.size+1))
-			bad := bytes.Replace(wire, []byte(old), []byte(test.algorithm+":"+value), 1)
-			if _, err := Parse(bad); err == nil {
-				t.Fatal("oversized signature accepted")
+			for _, excess := range []int{1, 3} {
+				// One extra byte may fit in the same base64 quartet; three cannot.
+				value := base64.StdEncoding.EncodeToString(make([]byte, test.size+excess))
+				resolver := &countingMissingResolver{}
+				got, err := checkOneSignature(nil, nil, Signature{Index: 1, Domain: "example.com"}, SignatureValue{Selector: "s1", Algorithm: test.algorithm, Value: value}, resolver)
+				if got != test.want || err == nil || resolver.calls != 0 {
+					t.Fatalf("oversized signature +%d: status=%s err=%v DNS calls=%d", excess, got, err, resolver.calls)
+				}
 			}
 		})
 	}
@@ -94,6 +88,7 @@ func TestIDNASecurityValidation(t *testing.T) {
 		"xn--example-.com", "XN--EXAMPLE-.COM", "xn--a-.example",
 		"ｘｎ--example-.com", "xn\u00ad--example-.com", "xn--example-\u00ad.com",
 		"example\xff.com", "\xc0\xaf.example",
+		"İ.example", "I\u0307.example", "BÜCHER.example", "Bücher.example", "K.example",
 	} {
 		t.Run(domain, func(t *testing.T) {
 			if got, err := asciiDomain(domain); err == nil {
@@ -110,7 +105,8 @@ func TestIDNASecurityValidation(t *testing.T) {
 	}
 	for domain, want := range map[string]string{
 		"EXAMPLE.COM": "example.com", "例え.テスト": "xn--r8jz45g.xn--zckzah",
-		"BÜCHER.example": "xn--bcher-kva.example", "XN--BCHER-KVA.example": "xn--bcher-kva.example",
+		"bücher.EXAMPLE": "xn--bcher-kva.example", "XN--BCHER-KVA.example": "xn--bcher-kva.example",
+		"i\u0307.example": "xn--i-9bb.example",
 	} {
 		if got, err := asciiDomain(domain); err != nil || got != want {
 			t.Fatalf("asciiDomain(%q) = %q, %v; want %q", domain, got, err, want)
