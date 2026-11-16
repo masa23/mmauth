@@ -152,8 +152,8 @@ func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
 			previousEnd = last
 			result = append(result, recipeStep{Copy: []int{first, last}})
 		} else if data, ok := step["d"]; ok {
-			var lines []string
-			if err := json.Unmarshal(data, &lines); err != nil || len(lines) == 0 {
+			lines, ok := recipeStringArray(data)
+			if !ok {
 				return nil, errors.New("invalid Recipe data array")
 			}
 			for _, line := range lines {
@@ -163,8 +163,8 @@ func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
 			}
 			result = append(result, recipeStep{Data: lines})
 		} else if data, ok := step["u"]; ok {
-			var encoded []string
-			if err := json.Unmarshal(data, &encoded); err != nil || len(encoded) == 0 {
+			encoded, ok := recipeStringArray(data)
+			if !ok {
 				return nil, errors.New("invalid Recipe u array")
 			}
 			var lines []string
@@ -182,6 +182,26 @@ func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
 		}
 	}
 	return result, nil
+}
+
+// Decoding directly into []string silently treats JSON null as an empty
+// string. Both d and u require a nonempty array containing only strings.
+func recipeStringArray(raw json.RawMessage) ([]string, bool) {
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil || len(values) == 0 {
+		return nil, false
+	}
+	lines := make([]string, len(values))
+	for i, value := range values {
+		value = bytes.TrimSpace(value)
+		if len(value) == 0 || value[0] != '"' {
+			return nil, false
+		}
+		if err := json.Unmarshal(value, &lines[i]); err != nil {
+			return nil, false
+		}
+	}
+	return lines, true
 }
 
 // recipePositiveInteger implements JSON Schema integer semantics exactly.
@@ -237,7 +257,10 @@ func recipePositiveInteger(raw json.RawMessage) (int, bool) {
 }
 
 func applyRecipe(m *Message, r recipe) (*Message, error) {
-	previous := &Message{Headers: append([]string(nil), m.Headers...), Body: append([]byte(nil), m.Body...)}
+	previous := &Message{Headers: append([]string(nil), m.Headers...)}
+	if !r.HasBody {
+		previous.Body = append([]byte(nil), m.Body...)
+	}
 	for name, steps := range r.Headers {
 		var originals []string // converted to bottom-to-top below
 		var retained []string
@@ -286,39 +309,53 @@ func applyRecipe(m *Message, r recipe) (*Message, error) {
 		if r.NullBody {
 			return nil, errors.New("dkim2: null body Recipe cannot reconstruct the prior instance")
 		}
-		lines := splitBodyLines(previous.Body)
 		var out bytes.Buffer
+		bodyOffset, bodyLine := 0, 0
 		for _, step := range r.Body {
 			if step.Copy != nil {
-				if step.Copy[1] > len(lines) {
-					return nil, errors.New("dkim2: body Recipe copy exceeds available lines")
+				// Copy ranges are ascending and non-overlapping. Scan only as
+				// far as the requested end, without allocating an entry for
+				// every line (a body may consist almost entirely of CRLFs).
+				start := bodyOffset
+				terminated := false
+				for bodyLine < step.Copy[1] {
+					if bodyOffset == len(m.Body) {
+						return nil, errors.New("dkim2: body Recipe copy exceeds available lines")
+					}
+					if bodyLine == step.Copy[0]-1 {
+						start = bodyOffset
+					}
+					end := bytes.Index(m.Body[bodyOffset:], []byte("\r\n"))
+					terminated = end >= 0
+					if terminated {
+						bodyOffset += end + 2
+					} else {
+						bodyOffset = len(m.Body)
+					}
+					bodyLine++
 				}
-				for _, line := range lines[step.Copy[0]-1 : step.Copy[1]] {
-					out.WriteString(line)
+				needed := bodyOffset - start
+				if !terminated {
+					needed += 2
+				}
+				if needed > (64<<20)-out.Len() {
+					return nil, errors.New("dkim2: reconstructed body exceeds 64 MiB")
+				}
+				out.Write(m.Body[start:bodyOffset])
+				if !terminated {
 					out.WriteString("\r\n")
 				}
 			} else {
 				for _, line := range step.Data {
+					if len(line) > (64<<20)-out.Len()-2 {
+						return nil, errors.New("dkim2: reconstructed body exceeds 64 MiB")
+					}
 					out.WriteString(line)
 					out.WriteString("\r\n")
 				}
-			}
-			if out.Len() > 64<<20 {
-				return nil, errors.New("dkim2: reconstructed body exceeds 64 MiB")
 			}
 		}
 		previous.Body = out.Bytes()
 	}
 	return previous, nil
-}
-
-func splitBodyLines(body []byte) []string {
-	if len(body) == 0 {
-		return nil
-	}
-	parts := strings.Split(string(body), "\r\n")
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
-	}
-	return parts
 }
