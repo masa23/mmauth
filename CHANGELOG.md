@@ -1,5 +1,9 @@
 # Changelog
 
+## [v1.1.3](https://github.com/masa23/mmauth/compare/v1.1.2...v1.1.3) - 2026-11-16
+
+- DKIM2 Draft-09の署名・検証とDSN対応を追加 by @masa23 in https://github.com/masa23/mmauth/pull/36
+
 ## [v1.1.2](https://github.com/masa23/mmauth/compare/v1.1.1...v1.1.2) - 2026-10-14
 
 - RFCに基づくメール認証判定と回帰テストを強化 by @masa23 in https://github.com/masa23/mmauth/pull/34
