@@ -21,6 +21,10 @@
 // reports and receipt-time reconstruction. They return bytes and an envelope;
 // the MTA retains receipt metadata, supplies truthful delivery results and
 // decides whether to send the report. Null-sender messages never cause DSNs.
+// DSNs also support RFC 6533's internationalized status and original-message
+// MIME types. Originals containing 8-bit octets use base64-encoded global
+// parts, preserving their exact bytes. The MTA must still use SMTPUTF8 when
+// the returned envelope or outer message headers require it.
 // ReplayCheck runs even for exploded messages; Result.ExplodedAt identifies
 // which authenticated signers claim multiple delivery.
 // BCC signing requires BCCRecipients metadata and separate SMTP transactions

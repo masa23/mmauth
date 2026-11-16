@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -32,6 +33,7 @@ func parseRecipe(encoded string) (recipe, error) {
 		return recipe{}, errors.New("dkim2: Recipe JSON is not UTF-8")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(decoded))
+	decoder.UseNumber() // Preserve JSON's exact numeric values during key checks.
 	if err := checkUniqueJSONValue(decoder); err != nil {
 		return recipe{}, fmt.Errorf("dkim2: invalid Recipe JSON: %w", err)
 	}
@@ -138,12 +140,17 @@ func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
 			return nil, errors.New("Recipe step must have exactly one operation")
 		}
 		if data, ok := step["c"]; ok {
-			var bounds []int
-			if err := json.Unmarshal(data, &bounds); err != nil || len(bounds) != 2 || bounds[0] <= previousEnd || bounds[0] > bounds[1] {
+			var rawBounds []json.RawMessage
+			if err := json.Unmarshal(data, &rawBounds); err != nil || len(rawBounds) != 2 {
 				return nil, errors.New("invalid Recipe copy range")
 			}
-			previousEnd = bounds[1]
-			result = append(result, recipeStep{Copy: bounds})
+			first, firstOK := recipePositiveInteger(rawBounds[0])
+			last, lastOK := recipePositiveInteger(rawBounds[1])
+			if !firstOK || !lastOK || first <= previousEnd || first > last {
+				return nil, errors.New("invalid Recipe copy range")
+			}
+			previousEnd = last
+			result = append(result, recipeStep{Copy: []int{first, last}})
 		} else if data, ok := step["d"]; ok {
 			var lines []string
 			if err := json.Unmarshal(data, &lines); err != nil || len(lines) == 0 {
@@ -175,6 +182,58 @@ func parseSteps(raw json.RawMessage) ([]recipeStep, error) {
 		}
 	}
 	return result, nil
+}
+
+// recipePositiveInteger implements JSON Schema integer semantics exactly.
+// Decimal and exponent spellings are permitted, but fractions, zero, negative
+// values and machine overflow are not. Work and allocation remain linear in
+// the input; exponent magnitudes never cause unbounded zero expansion.
+func recipePositiveInteger(raw json.RawMessage) (int, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] < '0' || raw[0] > '9' {
+		return 0, false
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return 0, false
+	}
+	mantissa := number.String()
+	exponent := 0
+	if index := strings.IndexAny(mantissa, "eE"); index >= 0 {
+		var err error
+		exponent, err = strconv.Atoi(mantissa[index+1:])
+		if err != nil {
+			return 0, false
+		}
+		mantissa = mantissa[:index]
+	}
+	fractionDigits := 0
+	if index := strings.IndexByte(mantissa, '.'); index >= 0 {
+		fractionDigits = len(mantissa) - index - 1
+		mantissa = mantissa[:index] + mantissa[index+1:]
+	}
+	digits := strings.TrimLeft(mantissa, "0")
+	if digits == "" {
+		return 0, false
+	}
+	zeros := 0
+	if exponent < fractionDigits {
+		trailingZeros := len(digits) - len(strings.TrimRight(digits, "0"))
+		// Compare before subtracting the exponent: an attacker may supply
+		// the smallest int, whose negation would otherwise overflow.
+		if exponent < fractionDigits-trailingZeros {
+			return 0, false
+		}
+		digits = digits[:len(digits)-(fractionDigits-exponent)]
+	} else {
+		zeros = exponent - fractionDigits
+	}
+	maxDigits := len(strconv.Itoa(int(^uint(0) >> 1)))
+	if len(digits) > maxDigits || zeros > maxDigits-len(digits) {
+		return 0, false
+	}
+	value, err := strconv.Atoi(digits + strings.Repeat("0", zeros))
+	return value, err == nil
 }
 
 func applyRecipe(m *Message, r recipe) (*Message, error) {

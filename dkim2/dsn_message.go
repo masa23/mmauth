@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"golang.org/x/text/language"
 )
 
 // DSNRecipient is one RFC 3464 per-recipient delivery result. FinalRecipient
@@ -142,6 +144,10 @@ func buildDSN(original []byte, envelope Envelope, options DSNOptions) (*Generate
 	if err != nil {
 		return nil, err
 	}
+	statusType, statusTransfer := "message/delivery-status", "7bit"
+	if dsnHas8Bit(machine) {
+		statusType, statusTransfer = "message/global-delivery-status", "base64"
+	}
 	human := options.HumanText
 	if human == "" {
 		human = "This is a delivery status notification.\r\n"
@@ -167,11 +173,11 @@ func buildDSN(original []byte, envelope Envelope, options DSNOptions) (*Generate
 	if err := qp.Close(); err != nil {
 		return nil, err
 	}
-	part, err = multipartWriter.CreatePart(textproto.MIMEHeader{"Content-Type": {"message/delivery-status"}, "Content-Transfer-Encoding": {"7bit"}})
+	part, err = multipartWriter.CreatePart(textproto.MIMEHeader{"Content-Type": {statusType}, "Content-Transfer-Encoding": {statusTransfer}})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := part.Write(machine); err != nil {
+	if err := writeDSNPart(part, machine, statusTransfer); err != nil {
 		return nil, err
 	}
 	contentType := "message/rfc822"
@@ -181,17 +187,30 @@ func buildDSN(original []byte, envelope Envelope, options DSNOptions) (*Generate
 	transfer := "7bit"
 	for _, b := range content {
 		if b >= 128 {
-			transfer = "8bit"
+			// An 8-bit octet may belong to an internationalized MIME child
+			// header even when the outer headers are ASCII. The global
+			// container safely covers that case without recursive MIME parsing.
+			contentType, transfer = "message/global", "base64"
+			if options.HeadersOnly {
+				contentType = "message/global-headers"
+			}
 		}
 		if b == 0 {
 			return nil, errors.New("dkim2: DSN original contains a NUL octet")
+		}
+	}
+	if transfer == "base64" {
+		for _, header := range m.Headers {
+			if !utf8.ValidString(header) {
+				return nil, errors.New("dkim2: global original headers are not UTF-8")
+			}
 		}
 	}
 	part, err = multipartWriter.CreatePart(textproto.MIMEHeader{"Content-Type": {contentType}, "Content-Transfer-Encoding": {transfer}})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := part.Write(content); err != nil {
+	if err := writeDSNPart(part, content, transfer); err != nil {
 		return nil, err
 	}
 	if err := multipartWriter.Close(); err != nil {
@@ -210,7 +229,7 @@ func buildDSN(original []byte, envelope Envelope, options DSNOptions) (*Generate
 		return nil, errors.New("dkim2: invalid DSN To field")
 	}
 	var wire bytes.Buffer
-	fmt.Fprintf(&wire, "From: Mail Delivery System <postmaster@%s>\r\nTo: %s\r\nDate: %s\r\nMessage-ID: <dsn.%s@%s>\r\nSubject: Delivery Status Notification\r\nMIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=delivery-status;\r\n boundary=%q\r\nContent-Transfer-Encoding: %s\r\n\r\n", options.Sign.Domain, to, when.Format(time.RFC1123Z), hex.EncodeToString(nonce[:]), options.Sign.Domain, multipartWriter.Boundary(), transfer)
+	fmt.Fprintf(&wire, "From: Mail Delivery System <postmaster@%s>\r\nTo: %s\r\nDate: %s\r\nMessage-ID: <dsn.%s@%s>\r\nSubject: Delivery Status Notification\r\nMIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=%s;\r\n boundary=%q\r\nContent-Transfer-Encoding: 7bit\r\n\r\n", options.Sign.Domain, to, when.Format(time.RFC1123Z), hex.EncodeToString(nonce[:]), options.Sign.Domain, strings.TrimPrefix(statusType, "message/"), multipartWriter.Boundary())
 	wire.Write(body.Bytes())
 	signing := options.Sign
 	signing.Envelope = envelope
@@ -221,13 +240,57 @@ func buildDSN(original []byte, envelope Envelope, options DSNOptions) (*Generate
 	return &GeneratedDSN{Wire: signed, Envelope: Envelope{MailFrom: "<>", RcptTo: append([]string(nil), envelope.RcptTo...)}}, nil
 }
 
+// dsnHas8Bit conservatively identifies data that requires an internationalized
+// MIME container, including UTF-8 headers in nested MIME entities.
+func dsnHas8Bit(data []byte) bool {
+	for _, b := range data {
+		if b >= 128 {
+			return true
+		}
+	}
+	return false
+}
+
+// writeDSNPart preserves the content's exact octets while making international
+// bodies safe for a 7-bit return transport, using RFC 2045's 76-column folding.
+func writeDSNPart(out io.Writer, data []byte, transfer string) error {
+	if transfer != "base64" {
+		_, err := out.Write(data)
+		return err
+	}
+	var encoded [76]byte
+	for len(data) > 0 {
+		n := len(data)
+		if n > 57 {
+			n = 57
+		}
+		size := base64.StdEncoding.EncodedLen(n)
+		base64.StdEncoding.Encode(encoded[:size], data[:n])
+		if _, err := out.Write(encoded[:size]); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(out, "\r\n"); err != nil {
+			return err
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
 func buildDeliveryStatus(reporting string, recipients []DSNRecipient) ([]byte, error) {
 	if len(recipients) == 0 || len(recipients) > maxHeaderFields {
 		return nil, errors.New("dkim2: DSN requires between 1 and 4096 recipient results")
 	}
 	var out bytes.Buffer
+	global := false
+	for _, recipient := range recipients {
+		global = global || dsnHas8Bit([]byte(recipient.Diagnostic))
+	}
 	fmt.Fprintf(&out, "Reporting-MTA: dns; %s\r\n", reporting)
 	for _, result := range recipients {
+		if !safeDSNText(result.Action, len(result.Action)) {
+			return nil, errors.New("dkim2: DSN action must be an ASCII token")
+		}
 		result.Action = strings.ToLower(result.Action)
 		statusCode, err := dsnStatusCode(result.Status)
 		if err != nil {
@@ -235,12 +298,19 @@ func buildDeliveryStatus(reporting string, recipients []DSNRecipient) ([]byte, e
 		}
 		result.Status = statusCode
 		path, err := normalizePath(result.FinalRecipient)
-		if err != nil || !validPath(path, false) || !validDSNActionStatus(result.Action, result.Status) || !safeDSNText(result.Diagnostic, 800) {
+		if err != nil || !validPath(path, false) || !validDSNActionStatus(result.Action, result.Status) || !safeDSNUTF8Text(result.Diagnostic, 800) {
 			return nil, errors.New("dkim2: invalid DSN recipient, action, status or diagnostic")
 		}
 		// RFC 3464 section 2.3.2 requires the exact recipient spelling,
 		// including alphabetic case, from the transport envelope.
 		addressType, address := dsnRecipientAddress(result.FinalRecipient)
+		native := result.FinalRecipient[1 : len(result.FinalRecipient)-1]
+		if global && addressType == "utf-8" && !strings.Contains(native, `\x{`) {
+			// RFC 6533 recommends the native address form in global status.
+			// Keep unitext when a quoted SMTP pair could be confused with
+			// the transitional escape form and change the recipient's value.
+			address = native
+		}
 		if len(address)+len(addressType)+20 > 998 {
 			return nil, errors.New("dkim2: DSN recipient field exceeds line limit")
 		}
@@ -253,6 +323,20 @@ func buildDeliveryStatus(reporting string, recipients []DSNRecipient) ([]byte, e
 		}
 	}
 	return out.Bytes(), nil
+}
+
+// safeDSNUTF8Text permits printable UTF-8 without accepting header delimiters,
+// invalid encodings, or control octets in a caller-supplied diagnostic.
+func safeDSNUTF8Text(value string, limit int) bool {
+	if len(value) > limit || !utf8.ValidString(value) {
+		return false
+	}
+	for _, c := range value {
+		if c < 32 || c == 127 {
+			return false
+		}
+	}
+	return true
 }
 
 func safeDSNText(value string, limit int) bool {
@@ -268,6 +352,9 @@ func safeDSNText(value string, limit int) bool {
 }
 
 func validDSNActionStatus(action, status string) bool {
+	if !safeDSNText(action, len(action)) {
+		return false
+	}
 	action = strings.ToLower(action)
 	parts := strings.Split(status, ".")
 	if len(parts) != 3 || len(parts[0]) != 1 || !strings.ContainsAny(parts[0], "245") {
@@ -331,7 +418,11 @@ func parseDSN(wire []byte) (*parsedDSN, error) {
 		return nil, err
 	}
 	contentType, parameters, err := mime.ParseMediaType(value)
-	if err != nil || contentType != "multipart/report" || !strings.EqualFold(parameters["report-type"], "delivery-status") || parameters["boundary"] == "" {
+	if !safeDSNText(parameters["report-type"], len(parameters["report-type"])) {
+		return nil, errors.New("dkim2: DSN report-type must be an ASCII token")
+	}
+	reportType := strings.ToLower(parameters["report-type"])
+	if err != nil || contentType != "multipart/report" || reportType != "delivery-status" && reportType != "global-delivery-status" || parameters["boundary"] == "" {
 		return nil, errors.New("dkim2: expected multipart/report with delivery-status report-type")
 	}
 	if err := multipart.NewWriter(io.Discard).SetBoundary(parameters["boundary"]); err != nil {
@@ -369,21 +460,29 @@ func parseDSN(wire []byte) (*parsedDSN, error) {
 				}
 			}
 		}
-		partType, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+		partType, partParameters, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
 		if err != nil {
 			return nil, errors.New("dkim2: invalid DSN part content type")
 		}
-		encoding := strings.ToLower(strings.TrimSpace(part.Header.Get("Content-Transfer-Encoding")))
+		global := partType == "message/global" || partType == "message/global-headers" || partType == "message/global-delivery-status"
+		if global && len(partParameters) != 0 {
+			return nil, errors.New("dkim2: global DSN part must not have content-type parameters")
+		}
+		encoding := strings.Trim(part.Header.Get("Content-Transfer-Encoding"), " \t")
+		if !safeDSNText(encoding, len(encoding)) {
+			return nil, errors.New("dkim2: DSN transfer encoding must be an ASCII token")
+		}
+		encoding = strings.ToLower(encoding)
 		var input io.Reader = part
 		switch encoding {
 		case "", "7bit", "8bit", "binary":
 		case "base64":
-			if index == 1 || index == 2 && partType == "message/rfc822" {
+			if index == 1 && !global || index == 2 && partType == "message/rfc822" {
 				return nil, errors.New("dkim2: encoded message DSN part is not permitted")
 			}
-			input = base64.NewDecoder(base64.StdEncoding.Strict(), part)
+			input = base64.NewDecoder(base64.StdEncoding.Strict(), dsnMIMEBase64Reader{part})
 		case "quoted-printable":
-			if index == 1 || index == 2 && partType == "message/rfc822" {
+			if index == 1 && !global || index == 2 && partType == "message/rfc822" {
 				return nil, errors.New("dkim2: encoded message DSN part is not permitted")
 			}
 			input = quotedprintable.NewReader(part)
@@ -398,6 +497,9 @@ func parseDSN(wire []byte) (*parsedDSN, error) {
 		if err != nil || len(data) > limit {
 			return nil, errors.New("dkim2: invalid or oversized DSN part")
 		}
+		if global && (encoding == "" || encoding == "7bit") && dsnHas8Bit(data) {
+			return nil, errors.New("dkim2: global DSN part has 8-bit data under a 7-bit transfer encoding")
+		}
 		if err := part.Close(); err != nil {
 			return nil, err
 		}
@@ -411,21 +513,36 @@ func parseDSN(wire []byte) (*parsedDSN, error) {
 			// renders them nor copies them into a propagated report.
 			result.humanText = string(data)
 		case 1:
-			if partType != "message/delivery-status" || encoding != "" && encoding != "7bit" {
+			if partType != "message/"+reportType || partType == "message/delivery-status" && encoding != "" && encoding != "7bit" {
 				return nil, errors.New("dkim2: DSN second part must be 7-bit delivery-status")
 			}
-			result.reportingMTA, result.recipients, err = parseDeliveryStatus(data)
+			if global && (encoding == "" || encoding == "7bit" || encoding == "binary") {
+				return nil, errors.New("dkim2: global delivery status requires 8bit or an encoded transfer form")
+			}
+			result.reportingMTA, result.recipients, err = parseDeliveryStatusMode(data, global)
 			if err != nil {
 				return nil, err
 			}
 		case 2:
-			if partType != "message/rfc822" && partType != "text/rfc822-headers" {
+			if partType != "message/rfc822" && partType != "text/rfc822-headers" && partType != "message/global" && partType != "message/global-headers" {
 				return nil, errors.New("dkim2: DSN third part must contain original message or headers")
 			}
 			result.original = data
-			result.headersOnly = partType == "text/rfc822-headers"
+			result.headersOnly = partType == "text/rfc822-headers" || partType == "message/global-headers"
 			if result.headersOnly && bytes.Contains(data, []byte("\r\n\r\n")) {
 				return nil, errors.New("dkim2: DSN headers-only part contains a body separator")
+			}
+			embedded, err := Parse(data)
+			if err != nil {
+				return nil, fmt.Errorf("dkim2: invalid DSN original: %w", err)
+			}
+			for _, header := range embedded.Headers {
+				if global && !utf8.ValidString(header) {
+					return nil, errors.New("dkim2: global original headers are not UTF-8")
+				}
+				if !global && dsnHas8Bit([]byte(header)) {
+					return nil, errors.New("dkim2: traditional DSN original headers are not ASCII")
+				}
 			}
 		}
 	}
@@ -433,6 +550,26 @@ func parseDSN(wire []byte) (*parsedDSN, error) {
 		return nil, errors.New("dkim2: DSN requires exactly three MIME parts and a closing boundary")
 	}
 	return result, nil
+}
+
+// dsnMIMEBase64Reader ignores non-alphabet octets as required by RFC 2045
+// section 6.8. This MIME-only filtering never changes signed DKIM2 tag decoding.
+type dsnMIMEBase64Reader struct{ io.Reader }
+
+func (r dsnMIMEBase64Reader) Read(p []byte) (int, error) {
+	for {
+		n, err := r.Reader.Read(p)
+		count := 0
+		for _, c := range p[:n] {
+			if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/' || c == '=' {
+				p[count] = c
+				count++
+			}
+		}
+		if count != 0 || err != nil || n == 0 {
+			return count, err
+		}
+	}
 }
 
 func preflightDSNPartHeaders(body []byte, boundary string) error {
@@ -513,6 +650,9 @@ func dsnBoundaryLine(line, delimiter []byte) int {
 }
 
 func rawMIMEEncoding(value string) bool {
+	if !safeDSNText(value, len(value)) {
+		return false
+	}
 	switch strings.ToLower(value) {
 	case "", "7bit", "8bit", "binary":
 		return true
@@ -537,7 +677,7 @@ func dsnSingleHeader(fields []string, name string, required bool) (string, error
 			return "", err
 		}
 		_, value, _ = strings.Cut(unfolded, ":")
-		value = strings.TrimSpace(value)
+		value = strings.Trim(value, " \t")
 	}
 	if required && (!found || value == "") {
 		return "", fmt.Errorf("dkim2: missing DSN %s field", name)
@@ -548,8 +688,17 @@ func dsnSingleHeader(fields []string, name string, required bool) (string, error
 // DSN fields are deliberately parsed independently of net/textproto so its
 // unbounded header reader is never applied to attacker-provided MIME bodies.
 func parseDeliveryStatus(data []byte) (string, []DSNRecipient, error) {
+	return parseDeliveryStatusMode(data, false)
+}
+
+// parseDeliveryStatusMode interprets UTF-8 only for the RFC 6533 global type;
+// the traditional type remains bounded 7-bit CRLF data.
+func parseDeliveryStatusMode(data []byte, global bool) (string, []DSNRecipient, error) {
+	if global && !utf8.Valid(data) {
+		return "", nil, errors.New("dkim2: global delivery status is not UTF-8")
+	}
 	for i, b := range data {
-		if b >= 127 || b < 32 && b != '\r' && b != '\n' && b != '\t' || b == '\r' && (i+1 >= len(data) || data[i+1] != '\n') || b == '\n' && (i == 0 || data[i-1] != '\r') {
+		if b == 127 || b >= 128 && !global || b < 32 && b != '\r' && b != '\n' && b != '\t' || b == '\r' && (i+1 >= len(data) || data[i+1] != '\n') || b == '\n' && (i == 0 || data[i-1] != '\r') {
 			return "", nil, errors.New("dkim2: delivery status is not 7-bit CRLF data")
 		}
 	}
@@ -566,9 +715,30 @@ func parseDeliveryStatus(data []byte) (string, []DSNRecipient, error) {
 			return "", nil, fmt.Errorf("dkim2: invalid delivery status fields: %w", err)
 		}
 		seen := make(map[string]bool)
+		languages := make(map[string]bool)
 		for _, field := range fields {
 			name, _, _ := strings.Cut(field, ":")
 			name = strings.ToLower(name)
+			if name == "localized-diagnostic" && global {
+				if index == 0 {
+					return "", nil, errors.New("dkim2: localized diagnostic occurs in the message block")
+				}
+				unfolded, err := unfold(field)
+				if err != nil {
+					return "", nil, err
+				}
+				_, value, _ := strings.Cut(unfolded, ":")
+				tag, text, ok := strings.Cut(value, ";")
+				tag = strings.Trim(tag, " \t")
+				if !ok || !seen["diagnostic-code"] || !safeDSNUTF8Text(strings.Trim(text, " \t\r\n"), maxHeaderFieldBytes) {
+					return "", nil, errors.New("dkim2: invalid localized diagnostic")
+				}
+				if _, err := language.Parse(tag); err != nil || languages[strings.ToLower(tag)] {
+					return "", nil, errors.New("dkim2: invalid or duplicate localized diagnostic language")
+				}
+				languages[strings.ToLower(tag)] = true
+				continue
+			}
 			if seen[name] {
 				return "", nil, errors.New("dkim2: duplicate delivery status field")
 			}
@@ -580,10 +750,11 @@ func parseDeliveryStatus(data []byte) (string, []DSNRecipient, error) {
 		if index == 0 {
 			value, err := dsnStatusValue(fields, "Reporting-MTA", true)
 			kind, name, ok := strings.Cut(value, ";")
-			if err != nil || !ok || !strings.EqualFold(strings.TrimSpace(kind), "dns") || !validDomain(strings.TrimSpace(name)) {
+			kind = strings.Trim(kind, " \t")
+			if err != nil || !ok || !safeDSNText(kind, len(kind)) || !strings.EqualFold(kind, "dns") || !validDomain(strings.Trim(name, " \t")) {
 				return "", nil, errors.New("dkim2: invalid Reporting-MTA field")
 			}
-			reporting = strings.TrimSpace(name)
+			reporting = strings.Trim(name, " \t")
 			continue
 		}
 		address, err := dsnStatusValue(fields, "Final-Recipient", true)
@@ -594,11 +765,18 @@ func parseDeliveryStatus(data []byte) (string, []DSNRecipient, error) {
 		if !ok {
 			return "", nil, errors.New("dkim2: invalid Final-Recipient field")
 		}
-		value = strings.TrimSpace(value)
-		switch strings.ToLower(strings.TrimSpace(kind)) {
+		value = strings.Trim(value, " \t")
+		kind = strings.Trim(kind, " \t")
+		if !safeDSNText(kind, len(kind)) {
+			return "", nil, errors.New("dkim2: DSN address type must be an ASCII token")
+		}
+		switch strings.ToLower(kind) {
 		case "rfc822":
+			if dsnHas8Bit([]byte(value)) {
+				return "", nil, errors.New("dkim2: rfc822 DSN recipient is not ASCII")
+			}
 		case "utf-8":
-			value, err = decodeDSNUnitext(value)
+			value, err = decodeDSNRecipient(value, global)
 			if err != nil {
 				return "", nil, err
 			}
@@ -611,8 +789,8 @@ func parseDeliveryStatus(data []byte) (string, []DSNRecipient, error) {
 			return "", nil, errors.New("dkim2: invalid DSN recipient mailbox")
 		}
 		action, err := dsnStatusValue(fields, "Action", true)
-		if err != nil {
-			return "", nil, err
+		if err != nil || !safeDSNText(action, len(action)) {
+			return "", nil, errors.New("dkim2: invalid DSN action token")
 		}
 		action = strings.ToLower(action)
 		status, err := dsnSingleHeader(fields, "Status", true)
@@ -628,10 +806,12 @@ func parseDeliveryStatus(data []byte) (string, []DSNRecipient, error) {
 		}
 		if diagnostic != "" {
 			kind, text, ok := strings.Cut(diagnostic, ";")
-			if !ok || !strings.EqualFold(strings.TrimSpace(kind), "smtp") || !safeDSNText(strings.TrimSpace(text), 800) {
+			kind = strings.Trim(kind, " \t")
+			text = strings.Trim(text, " \t")
+			if !ok || !safeDSNText(kind, len(kind)) || !strings.EqualFold(kind, "smtp") || !safeDSNUTF8Text(text, 800) || !global && !safeDSNText(text, 800) {
 				return "", nil, errors.New("dkim2: invalid SMTP diagnostic")
 			}
-			diagnostic = strings.TrimSpace(text)
+			diagnostic = text
 		}
 		recipients = append(recipients, DSNRecipient{FinalRecipient: path, Action: action, Status: status, Diagnostic: diagnostic})
 	}
@@ -696,7 +876,7 @@ func stripDSNComments(value string) (string, error) {
 	if depth != 0 || quoted {
 		return "", errors.New("dkim2: unclosed DSN comment or quote")
 	}
-	return strings.TrimSpace(out.String()), nil
+	return strings.Trim(out.String(), " \t"), nil
 }
 
 func dsnStatusFields(block []byte) ([]string, error) {
@@ -736,10 +916,36 @@ func dsnStatusFields(block []byte) ([]string, error) {
 }
 
 func decodeDSNUnitext(encoded string) (string, error) {
+	return decodeDSNUnitextMode(encoded, false)
+}
+
+// decodeDSNRecipient accepts the global native address form as well as the
+// transitional unitext form. Only a valid SMTP mailbox can survive either path.
+func decodeDSNRecipient(value string, global bool) (string, error) {
+	decoded, err := decodeDSNUnitextMode(value, global)
+	if err == nil {
+		if normalized, pathErr := normalizePath("<" + decoded + ">"); pathErr == nil && validPath(normalized, false) {
+			return decoded, nil
+		}
+	}
+	if global {
+		if normalized, pathErr := normalizePath("<" + value + ">"); pathErr == nil && validPath(normalized, false) {
+			return value, nil
+		}
+	}
+	return "", errors.New("dkim2: invalid UTF-8 DSN recipient")
+}
+
+// decodeDSNUnitextMode applies QUCHAR only in a global body, preserves Unicode
+// octets exactly, and accepts only the code points permitted by HEXPOINT.
+func decodeDSNUnitextMode(encoded string, global bool) (string, error) {
+	if !utf8.ValidString(encoded) {
+		return "", errors.New("dkim2: invalid UTF-8 DSN encoded address")
+	}
 	var out strings.Builder
 	for i := 0; i < len(encoded); i++ {
 		if encoded[i] != '\\' {
-			if encoded[i] < 33 || encoded[i] > 126 || encoded[i] == '+' || encoded[i] == '=' {
+			if encoded[i] < 33 || encoded[i] == 127 || encoded[i] >= 128 && !global || encoded[i] == '+' || encoded[i] == '=' {
 				return "", errors.New("dkim2: invalid UTF-8 DSN encoded address")
 			}
 			out.WriteByte(encoded[i])
@@ -752,8 +958,9 @@ func decodeDSNUnitext(encoded string) (string, error) {
 		if end < 0 || end < 2 || end > 6 {
 			return "", errors.New("dkim2: invalid UTF-8 DSN escape length")
 		}
-		n, err := strconv.ParseUint(encoded[i+3:i+3+end], 16, 32)
-		if err != nil || n > utf8.MaxRune || n >= 0xD800 && n <= 0xDFFF {
+		hexPoint := encoded[i+3 : i+3+end]
+		n, err := strconv.ParseUint(hexPoint, 16, 32)
+		if err != nil || n == 0 || n > utf8.MaxRune || n >= 0xD800 && n <= 0xDFFF || end > 2 && hexPoint[0] == '0' || n < 128 && !(n <= 0x20 || n == 0x2B || n == 0x3D || n == 0x5C || n == 0x7F) {
 			return "", errors.New("dkim2: invalid UTF-8 DSN code point")
 		}
 		out.WriteRune(rune(n))

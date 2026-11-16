@@ -81,6 +81,10 @@ checked := dkim2.VerifyDSN(dsnWire, dsnEnvelope, dkim2.DSNVerifyOptions{
 
 `VerifyDSN`はDSN自体と埋め込み原文の最新署名・ハッシュを認証し、自システムの署名ドメイン・MAIL FROM、DSN発信者、実際の返送宛先を確認します。本文を含まない場合は`HeadersOnly`で明示します。`None`・`Fail`・`PermError`・`TempError`の通知は上流へ伝播させないでください。DNS照会数・時間はDSN本体と原文を合算して制限します。受信MIMEの人間向け部分は`text/*`と、内部構造を解釈しない`multipart/alternative`に対応し、内容の表示処理は行いません。
 
+国際化DSNでは[RFC6533](https://www.rfc-editor.org/rfc/rfc6533.html#section-4.4)の`message/global`・`message/global-headers`・`message/global-delivery-status`にも対応します。生成時、添付する原文に8bitオクテットがあれば`message/global`、ヘッダーのみなら`message/global-headers`を選び、base64で元のバイト列を保持します。ASCIIのみの添付は従来の形式を使用します。返送エンベロープやDSN本体のヘッダーに国際化アドレスが含まれる場合、MTA側でSMTPUTF8を使用してください。
+
+Recipeのコピー範囲はJSON Schemaの整数として解釈し、`1`・`1.0`・`1e0`など同じ整数を表す数値を受理します。非整数や扱える整数範囲を超える値は、浮動小数で丸めずに拒否します。
+
 上流への伝播には`dkim2.PropagateDSN`と`DSNPropagationOptions`を使います。`Verification`、新しい通知内容の`Notification`、元メールをこの転送システムが受信した時点の最高署名番号`ReceivedSignatureIndex`を指定してください。この番号はメールと対応付けてMTA側に保存し、未認証の通知から採用しないでください。APIは`LocalDomains`に属する追加署名だけを除去し、該当Recipeを逆適用し、未署名の経路フィールドを削除したうえで、署名とMessage-Instanceがそれぞれ1個の新しいDSNを生成します。null Recipeがあればヘッダーのみの通知に切り替えます。人間向け文面・診断・配送結果には上流へ開示してよい内容を指定してください。下流DSNの文面は自動転記しません。SMTP送信、再送、リプレイ・配送判断はMTA側の責任です。
 
 ## ライセンス

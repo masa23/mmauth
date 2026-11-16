@@ -203,6 +203,11 @@ func TestDSNUnitextRejectsInvalidEscapes(t *testing.T) {
 }
 
 func FuzzParseDSN(f *testing.F) {
+	globalStatus := []byte("Reporting-MTA: dns; relay.test\r\n\r\nFinal-Recipient: utf-8; 受信@relay.test\r\nAction: failed\r\nStatus: 5.1.1\r\nDiagnostic-Code: smtp; 550 宛先不明\r\n")
+	globalOriginal := []byte("From: 受信@example.com\r\n\r\nbody\xff\r\n")
+	f.Add(internationalDSNWire(f, "message/global-delivery-status", "message/global", "base64", globalStatus, globalOriginal))
+	f.Add(internationalDSNWire(f, "message/global-delivery-status", "message/global", "8bit", globalStatus, globalOriginal))
+	f.Add(internationalDSNWire(f, "message/global-delivery-status", "message/global-headers", "quoted-printable", globalStatus, []byte("From: 受信@example.com\r\n")))
 	f.Add([]byte("From: postmaster@relay.test\r\nContent-Type: multipart/report; boundary=x; report-type=delivery-status\r\n\r\n--x--\r\n"))
 	f.Add([]byte("From: postmaster@relay.test\r\n\r\n"))
 	f.Add([]byte("From: postmaster@relay.test\r\nMIME-Version: 1.0\r\nContent-Type: multipart/report; boundary=x; report-type=delivery-status\r\n\r\n--x\r\nContent-Type: text/plain\r\n\r\nDelivery failed.\r\n--x\r\nContent-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; relay.test\r\n\r\nFinal-Recipient: rfc822; bob@relay.test\r\nAction: failed\r\nStatus: 5.1.1\r\n\r\n--x\r\nContent-Type: message/rfc822\r\n\r\nFrom: alice@example.com\r\n\r\nbody\r\n\r\n--x--\r\n"))
