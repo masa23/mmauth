@@ -3,7 +3,7 @@
 package internal
 
 import (
-	common "github.com/cloudflare/circl/sign/internal/dilithium"
+	common "github.com/masa23/mmauth/dkim2/internal/circl/sign/internal/dilithium"
 )
 
 // Writes p with norm less than or equal η into buf, which must be of

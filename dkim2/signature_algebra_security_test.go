@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+	"github.com/masa23/mmauth/dkim2/internal/circl/sign/mldsa/mldsa44"
 )
 
 // Section 14.6 combines individual signature results. A size or key-policy

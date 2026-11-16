@@ -10,6 +10,8 @@
 // identifies preceding bodies that could not be authenticated.
 // A highest-numbered nd= signature requires an out-of-band validator callback.
 // DKIM2 ignores deprecated DNS key tags h=, n=, s= and t=.
+// ML-DSA-44 keys are available from dkim2/mldsa44, backed by bundled Go 1.19
+// compatible code without requiring consumer-side module replacements.
 // ForwardChecked and ReviseChecked verify incoming messages before adding a
 // hop. Forward and Revise require OutOfBandArrangement because they only check
 // hashes and custody, not prior DNS keys.

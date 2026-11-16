@@ -20,7 +20,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/cloudflare/circl/internal/sha3"
+	"github.com/masa23/mmauth/dkim2/internal/circl/internal/sha3"
 	"golang.org/x/sys/cpu"
 )
 

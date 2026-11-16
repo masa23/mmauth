@@ -1,10 +1,17 @@
 # CIRCL ML-DSA-44 source for Go 1.19
 
-This module contains only the source files needed by `sign/mldsa/mldsa44`
+This directory contains only the source files needed by `sign/mldsa/mldsa44`
 from Cloudflare CIRCL v1.6.3. The upstream module declares Go 1.22, while
-this subset compiles and passes the DKIM2 tests with Go 1.19.13. Its module
-path remains `github.com/cloudflare/circl` so that the DKIM2 API keeps the
-same key types. See `LICENSE` for the upstream license.
+this subset compiles and passes the DKIM2 tests with Go 1.19.13. It belongs
+to the mmauth module, with imports relocated beneath
+`github.com/masa23/mmauth/dkim2/internal/circl`. There is no nested module
+or consumer-side replacement: the sources and local fixes are included in
+the published mmauth module itself. See `LICENSE` for the upstream license.
+
+Consumers obtain keys through the public
+`github.com/masa23/mmauth/dkim2/mldsa44` facade. Its key types provide binary
+serialization methods, and its private keys implement `crypto.Signer` for
+`dkim2.SignOptions.Key`.
 
 The ML-DSA-44 public-key `tr` cache is stored by value, backporting
 [upstream PR #606](https://github.com/cloudflare/circl/pull/606)
@@ -17,5 +24,4 @@ returned public key through that shared matrix. `TestPublicTrIsIndependentOfPriv
 and `TestPublicMatrixIsIndependentOfPrivate` cover both public-key constructors.
 
 Keep this copy based on v1.6.3 with the changes above. When updating it, verify
-the source and run the DKIM2 tests with Go 1.19 before changing the version in
-the root `go.mod`.
+the source and run the DKIM2 tests and an external-consumer build with Go 1.19.

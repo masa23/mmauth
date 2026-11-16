@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+	"github.com/masa23/mmauth/dkim2/internal/circl/sign/mldsa/mldsa44"
 )
 
 func TestRSAPublicKeyResourceLimits(t *testing.T) {

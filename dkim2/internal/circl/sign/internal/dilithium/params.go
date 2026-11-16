@@ -1,7 +1,7 @@
 package dilithium
 
 import (
-	"github.com/cloudflare/circl/sign/internal/dilithium/params"
+	"github.com/masa23/mmauth/dkim2/internal/circl/sign/internal/dilithium/params"
 )
 
 const (
