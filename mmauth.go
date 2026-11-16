@@ -102,10 +102,11 @@ func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAnd
 	return ret
 }
 
-// DKIMとARCの署名の検証を行うための構造体
+// DKIMとARCを検証する構造体。DKIM2は明示的に有効化した場合のみ検証する。
 type MMAuth struct {
 	AuthenticationHeaders *AuthenticationHeaders
 	Headers               headers
+	dkim2                 *dkim2Integration
 	pw                    *io.PipeWriter
 	pr                    *io.PipeReader
 	pclose                bool
@@ -133,21 +134,30 @@ func (m *MMAuth) parsedMail() {
 	}()
 
 	// ヘッダの取得
-	buf := bufio.NewReader(m.pr)
+	var input io.Reader = m.pr
+	if m.dkim2 != nil {
+		input = io.TeeReader(input, m.dkim2)
+	}
+	buf := bufio.NewReader(input)
 	m.Headers, err = readHeader(buf)
 	if err != nil {
 		m.err = err
 		return
+	}
+	if m.dkim2 != nil {
+		m.dkim2.skipIfUnsigned(m.Headers)
 	}
 
 	// 署名のヘッダを取得
 	m.AuthenticationHeaders, err = parseAuthentications(m.Headers)
 	if err != nil {
 		m.err = fmt.Errorf("failed to parse auth headers: %v", err)
+		m.captureDKIM2Remainder(buf)
 		return
 	}
 	if signatures := m.AuthenticationHeaders.DKIMSignatures; signatures != nil && len(*signatures) > maxDKIMSignaturesPerMessage {
 		m.err = fmt.Errorf("too many DKIM signatures")
+		m.captureDKIM2Remainder(buf)
 		return
 	}
 
@@ -249,14 +259,19 @@ func (mh *multiBodyHash) Get() []BodyHash {
 	return ret
 }
 
-// DKIM、ARCの署名を行うための構造体の初期化
+// NewMMAuthはDKIM2を無効にした従来のストリーミング検証器を作る。
 func NewMMAuth() *MMAuth {
+	return newMMAuth(nil)
+}
+
+func newMMAuth(dkim2Integration *dkim2Integration) *MMAuth {
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	m := &MMAuth{
-		pw:   pw,
-		pr:   pr,
-		done: done,
+		pw:    pw,
+		pr:    pr,
+		done:  done,
+		dkim2: dkim2Integration,
 	}
 
 	// メールデータを読み込んで解析する
@@ -300,9 +315,10 @@ func (m *MMAuth) Close() error {
 	return nil
 }
 
-// 付与されているDKIM・ARCの署名検証を行う
+// Verifyは付与されているDKIM・ARCの署名を検証する。DKIM2は有効時のみ検証する。
 func (m *MMAuth) Verify() {
 	if m.AuthenticationHeaders == nil {
+		m.verifyDKIM2()
 		return
 	}
 	if m.AuthenticationHeaders.DKIMSignatures != nil {
@@ -342,6 +358,7 @@ func (m *MMAuth) Verify() {
 			}
 		}
 	}
+	m.verifyDKIM2()
 }
 
 // parseMailFromIdentity accepts a mailbox or its SMTP path form, without a
@@ -427,9 +444,12 @@ func evaluateSPFIdentity(remoteAddr net.IP, helo, mailFrom string) (*spf.Result,
 	return spf.CheckSPF(remoteAddr, domain, sender, helo), domain
 }
 
-// 認証結果を配列形式で渡す
+// GetAuthenticationHeaderは認証結果を配列形式で返す。
 func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom string) []string {
 	if m.AuthenticationHeaders == nil {
+		if m.dkim2 != nil && m.dkim2.state.Checked {
+			return []string{dkim2AuthenticationResult(m.dkim2.state.Result)}
+		}
 		return nil
 	}
 	// SPFチェックを行う
@@ -468,6 +488,9 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 		results = append(results, "arc=fail (malformed ARC headers)")
 	} else if arcSigns != nil {
 		results = append(results, arcSigns.GetVerifyResultString())
+	}
+	if m.dkim2 != nil && m.dkim2.state.Checked {
+		results = append(results, dkim2AuthenticationResult(m.dkim2.state.Result))
 	}
 
 	return results
