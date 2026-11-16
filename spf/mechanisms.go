@@ -354,7 +354,7 @@ func (r *Record) matchPTRMechanism(me MechanismEntry, ip net.IP, domain, sender,
 	for _, target := range targets {
 		trimmedTarget := strings.TrimSuffix(target, ".")
 		// Check if the target domain ends with the domain to check (case-insensitive)
-		if expandedDomainToCheck == "" || strings.HasSuffix(strings.ToLower(trimmedTarget), strings.ToLower(expandedDomainToCheck)) {
+		if strings.EqualFold(trimmedTarget, strings.TrimSuffix(expandedDomainToCheck, ".")) || strings.HasSuffix(strings.ToLower(trimmedTarget), "."+strings.ToLower(strings.TrimSuffix(expandedDomainToCheck, "."))) {
 			// For implicit domain (when domainToCheck is empty), we just need to validate that
 			// the PTR record resolves back to the same IP
 			ips, res2 := resv.lookupIP(trimmedTarget)

@@ -97,17 +97,10 @@ func TestParseDomainKeyRecord(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
-			name:  "k tag with unknown key type should ignore per RFC 6376",
-			input: "v=DKIM1; h=sha256; k=rsa:ecdsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
-			expectedResult: DomainKey{
-				Version:       "DKIM1",
-				HashAlgo:      []HashAlgo{HashAlgoSHA256},
-				KeyType:       KeyTypeRSA, // ecdsa ignored, only last recognized value kept
-				PublicKey:     "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5jqnqaMgv8fFl8yQHDfPdU/7j0YvFza2YIMIYivVV/CaItZizlkY6emj9o6MZBK3RU9ni4BPCQ1do64+HhZHUanAPojZd0PsyusCBNBFU1wY6/xpcuoPf+Ru15UvLI2/o+9ElO4vF3l2YoTSOE5ljnBNd2EWihqmUQazEpu3PT1a7BbHZkW/7WdK5ipgU8+u/iyRai0DnrhgoiArzoDjFgm4TRJQGhD+EUOmnwFa3Xz5eQg50IigS7WKyHwF3HSZPzrkEFf5hIXYdoeIr6OqKg5sldONF/hY9voEITHZqtHOnrBlaBH2DTTI6uQH7Uc4JLv12xD6Gh1rlZy5zdMTwQIDAQAB",
-				ServiceType:   []ServiceType{},
-				SelectorFlags: []SelectorFlags{},
-			},
-			expectedErr: nil,
+			name:           "k tag does not allow a colon separated list",
+			input:          "v=DKIM1; k=rsa:ecdsa; p=AA==",
+			expectedResult: DomainKey{},
+			expectedErr:    ErrInvalidKeyType,
 		},
 		{
 			name:  "s tag with unknown service type should ignore per RFC 6376",

@@ -11,7 +11,7 @@ func TestGetARCChainValidationResult(t *testing.T) {
 		expect ChainValidationResult
 	}{
 		{
-			name: "pass",
+			name: "unverified cv claims",
 			input: []string{
 				"ARC-Seal: i=1; a=rsa-sha256; t=1617220000; cv=none; d=example.com; s=selector; b=signature1",
 				"ARC-Seal: i=2; a=rsa-sha256; t=1617220000; cv=pass; d=example.com; s=selector; b=signature2",
@@ -23,7 +23,7 @@ func TestGetARCChainValidationResult(t *testing.T) {
 				"ARC-Authentication-Results: i=2; example.com ; arc=pass; spf=pass",
 				"ARC-Authentication-Results: i=3; example.com ; arc=pass; dmarc=pass",
 			},
-			expect: ChainValidationResultPass,
+			expect: ChainValidationResultNone,
 		},
 		{
 			name:   "none",
@@ -76,8 +76,12 @@ func TestGetARCChainValidationResult(t *testing.T) {
 }
 
 func TestGetVerifyResultHandlesUnverifiedSignature(t *testing.T) {
-	var sigs Signatures
-	sigs.GetInstance(1)
+	key, _ := regressionARCKey(t)
+	headers := regressionAddSet(t, []string{"From: a@example.com\r\n"}, 1, ChainValidationResultNone, key)
+	sigs, err := ParseARCHeaders(headers)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if got := sigs.GetVerifyResult(); got != VerifyStatusNone {
 		t.Fatalf("expected none for unverified ARC signature, got %s", got)

@@ -71,11 +71,11 @@ func TestGetResult(t *testing.T) {
 
 func TestParseDKIMHeaders(t *testing.T) {
 	cases := []struct {
-		name           string
-		headers        []string
-		expectedDomain string
-		expectedCount  int
-		expectError    bool
+		name            string
+		headers         []string
+		expectedDomain  string
+		expectedCount   int
+		expectMalformed bool
 	}{
 		{
 			name: "Valid DKIM Signature",
@@ -83,45 +83,43 @@ func TestParseDKIMHeaders(t *testing.T) {
 				"DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=example.com; s=selector; h=from:to:subject:date; bh=base64hash; b=base64signature",
 				"Other-Header: value",
 			},
-			expectedDomain: "example.com",
-			expectedCount:  1,
-			expectError:    false,
+			expectedDomain:  "example.com",
+			expectedCount:   1,
+			expectMalformed: false,
 		},
 		{
 			name: "No DKIM Signature",
 			headers: []string{
 				"Other-Header: value",
 			},
-			expectedDomain: "",
-			expectedCount:  0,
-			expectError:    false,
+			expectedDomain:  "",
+			expectedCount:   0,
+			expectMalformed: false,
 		},
 		{
 			name: "Invalid DKIM Signature",
 			headers: []string{
 				"DKIM-Signature: invalid-signature",
 			},
-			expectedDomain: "",
-			expectedCount:  0,
-			expectError:    true,
+			expectedDomain:  "",
+			expectedCount:   1,
+			expectMalformed: true,
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			sigs, err := ParseDKIMHeaders(c.headers)
-			if c.expectError {
-				if err == nil {
-					t.Fatalf("expected error, got none")
-				}
-				return
-			}
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
 
 			if len(*sigs) != c.expectedCount {
 				t.Fatalf("expected %d signature(s), got %d", c.expectedCount, len(*sigs))
+			}
+
+			if c.expectMalformed && ((*sigs)[0].VerifyResult == nil || (*sigs)[0].VerifyResult.Status() != VerifyStatusPermErr) {
+				t.Fatal("malformed signature must retain a permerror result")
 			}
 
 			if c.expectedCount > 0 && (*sigs)[0].Domain != c.expectedDomain {

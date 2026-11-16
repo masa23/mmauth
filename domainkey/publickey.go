@@ -41,20 +41,11 @@ func ParseDKIMPublicKey(decoded []byte, keyType KeyType) (crypto.PublicKey, erro
 		return rsaPub, nil
 
 	case KeyTypeED25519:
-		// RFC 8463: raw 32‑octet public key or PKIX-encoded key
-		// If raw 32-byte key, use directly.
-		if len(decoded) == ed25519.PublicKeySize {
-			return ed25519.PublicKey(decoded), nil
+		// RFC 8463 §4.2 encodes the 256-bit public key directly in p=.
+		if len(decoded) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("invalid ed25519 public key length: %d", len(decoded))
 		}
-		// Attempt to parse as PKIX (SubjectPublicKeyInfo)
-		pub, err := x509.ParsePKIXPublicKey(decoded)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse ed25519 public key: %w", err)
-		}
-		if edPub, ok := pub.(ed25519.PublicKey); ok {
-			return edPub, nil
-		}
-		return nil, fmt.Errorf("invalid ed25519 public key type: %T", pub)
+		return ed25519.PublicKey(decoded), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported key type: %s", keyType)

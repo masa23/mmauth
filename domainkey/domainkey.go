@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type TXTLookupFunc func(name string) ([]string, error)
@@ -54,6 +55,14 @@ var (
 	ErrInvalidVersion       = errors.New("invalid version")
 )
 
+// dnsLookupError preserves the resolver error and supports errors.Is with the
+// package sentinel, including on Go 1.19 (which predates multiple %w values).
+type dnsLookupError struct{ cause error }
+
+func (e *dnsLookupError) Error() string        { return ErrDNSLookupFailed.Error() + ": " + e.cause.Error() }
+func (e *dnsLookupError) Unwrap() error        { return e.cause }
+func (e *dnsLookupError) Is(target error) bool { return target == ErrDNSLookupFailed }
+
 type HashAlgo string
 
 const (
@@ -91,6 +100,10 @@ type DomainKey struct {
 	SelectorFlags []SelectorFlags // t flags separated by colons
 	Version       string          // v version default:DKIM1
 	raw           string          // raw record
+	// These flags preserve explicit h=/s= restrictions even if every listed
+	// value is unknown. They must survive serialization of cached keys.
+	HashRestricted    bool `json:",omitempty"`
+	ServiceRestricted bool `json:",omitempty"`
 }
 
 // テストフラグが立っているか
@@ -109,11 +122,11 @@ func (d *DomainKey) IsService(service ServiceType) bool {
 		return true
 	}
 	// service typeが指定されていない場合は全てのサービスに対応
-	if len(d.ServiceType) == 0 {
+	if len(d.ServiceType) == 0 && !d.ServiceRestricted {
 		return true
 	}
 	for _, s := range d.ServiceType {
-		if s == service {
+		if s == service || s == ServiceTypeAll {
 			return true
 		}
 	}
@@ -157,21 +170,21 @@ func LookupDKIMDomainKeyWithResolver(selector, domain string, resolver TXTResolv
 }
 
 // LookupARCDomainKey ARCのドメインキーを検索する
-// versionが含まれていなくてもエラーを返さない
+// DKIMと同じ鍵バージョンを要求する。versionの省略は許可する。
 func LookupARCDomainKey(selector, domain string) (DomainKey, error) {
-	return lookupDomainKey(selector, domain)
+	return LookupDKIMDomainKey(selector, domain)
 }
 
 // lookupDomainKey
 func lookupDomainKey(selector, domain string) (DomainKey, error) {
 	query := fmt.Sprintf("%s._domainkey.%s", selector, domain)
 	res, err := DefaultResolver(query)
-	if dnsErr, ok := err.(*net.DNSError); ok {
-		if dnsErr.IsNotFound {
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound
 		}
-	} else if err != nil {
-		return DomainKey{}, ErrDNSLookupFailed
+		return DomainKey{}, &dnsLookupError{cause: err}
 	}
 	return parseDomainKeyRecords(res)
 }
@@ -179,18 +192,27 @@ func lookupDomainKey(selector, domain string) (DomainKey, error) {
 // parseDomainKeyRecords parses DNS TXT records and extracts the domain key.
 // Returns the first valid domain key with a non-empty public key.
 func parseDomainKeyRecords(records []string) (DomainKey, error) {
+	var firstErr error
 	for _, r := range records {
 		domainKey, err := ParseDomainKeyRecord(r)
 		if err != nil {
-			return DomainKey{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if domainKey.PublicKey != "" {
 			return domainKey, nil
 		}
 		// p=が空の場合はキーが撤回されたとみなす
 		if err := isKeyRevoked(r, domainKey); err != nil {
-			return DomainKey{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
+	}
+	if firstErr != nil {
+		return DomainKey{}, firstErr
 	}
 	return DomainKey{}, ErrNoRecordFound
 }
@@ -213,12 +235,12 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 		res, err = resolver.LookupTXT(ctx, query)
 	}
 
-	if dnsErr, ok := err.(*net.DNSError); ok {
-		if dnsErr.IsNotFound {
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
 			return DomainKey{}, ErrNoRecordFound
 		}
-	} else if err != nil {
-		return DomainKey{}, ErrDNSLookupFailed
+		return DomainKey{}, &dnsLookupError{cause: err}
 	}
 
 	return parseDomainKeyRecords(res)
@@ -228,18 +250,52 @@ func lookupDomainKeyWithResolver(selector, domain string, resolver TXTResolver) 
 func ParseDomainKeyRecord(r string) (DomainKey, error) {
 	var key DomainKey
 	key.raw = r
+	// Keep the empty input behavior of this parser; a DNS lookup still rejects
+	// it because it does not contain a public key.
+	if r == "" {
+		return key, nil
+	}
+	if err := validateKeyTagListCharacters(r); err != nil {
+		return DomainKey{}, err
+	}
+	seen := make(map[string]bool)
+	tagCount := 0
 
 	pairs := strings.Split(r, ";")
-	for _, pair := range pairs {
-		k, v, _ := strings.Cut(pair, "=")
+	for i, pair := range pairs {
+		if strings.TrimSpace(pair) == "" {
+			if i == len(pairs)-1 && i > 0 {
+				continue // RFC 6376 §3.2 permits one trailing semicolon.
+			}
+			return DomainKey{}, fmt.Errorf("invalid domain key tag-list")
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok {
+			return DomainKey{}, fmt.Errorf("invalid domain key tag-list")
+		}
 		// 値の前後の空白をトリム
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
-		switch strings.ToLower(k) {
+		if !validKeyTagName(k) {
+			return DomainKey{}, fmt.Errorf("invalid domain key tag name %q", k)
+		}
+		if seen[k] {
+			return DomainKey{}, fmt.Errorf("duplicate domain key tag %q", k)
+		}
+		seen[k] = true
+		if k == "v" && tagCount != 0 {
+			return DomainKey{}, fmt.Errorf("domain key version tag must be first")
+		}
+		tagCount++
+		switch k {
 		case "v":
+			if v != "DKIM1" {
+				return DomainKey{}, ErrInvalidVersion
+			}
 			key.Version = v
 			continue
 		case "h":
+			key.HashRestricted = true
 			algos := strings.Split(v, ":")
 			for _, algo := range algos {
 				trimmedAlgo := strings.TrimSpace(algo)
@@ -254,25 +310,21 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 				}
 			}
 		case "k":
-			keyTypes := strings.Split(v, ":")
-			for _, keyType := range keyTypes {
-				trimmedKeyType := strings.TrimSpace(keyType)
-				switch KeyType(trimmedKeyType) {
-				case KeyTypeRSA:
-					key.KeyType = KeyTypeRSA
-				case KeyTypeED25519:
-					key.KeyType = KeyTypeED25519
-				// RFC 6376: Unrecognized key types MUST be ignored
-				default:
-					// Unknown key types are ignored per RFC 6376 Section 3.6.1
-				}
+			// k= declares one algorithm. Only an omitted tag defaults to RSA;
+			// an explicit unsupported/empty value cannot authorize an RSA key.
+			switch KeyType(v) {
+			case KeyTypeRSA, KeyTypeED25519:
+				key.KeyType = KeyType(v)
+			default:
+				return DomainKey{}, ErrInvalidKeyType
 			}
 		case "n":
 			key.Notes = v
 		case "p":
-			// 空白を削除して格納
-			key.PublicKey = strings.ReplaceAll(v, " ", "")
+			// RFC 6376 §3.6.1 allows FWS anywhere in base64string.
+			key.PublicKey = strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(v)
 		case "s":
+			key.ServiceRestricted = true
 			serviceTypes := strings.Split(v, ":")
 			for _, serviceType := range serviceTypes {
 				trimmedServiceType := strings.TrimSpace(serviceType)
@@ -306,4 +358,51 @@ func ParseDomainKeyRecord(r string) (DomainKey, error) {
 	}
 
 	return key, nil
+}
+
+func validateKeyTagListCharacters(s string) error {
+	if !utf8.ValidString(s) {
+		return fmt.Errorf("invalid domain key tag-list UTF-8")
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\r' {
+			if i+2 >= len(s) || s[i+1] != '\n' || (s[i+2] != ' ' && s[i+2] != '\t') {
+				return fmt.Errorf("invalid domain key tag-list folding")
+			}
+			i++
+			continue
+		}
+		if c == '\n' || (c < ' ' && c != '\t') || c > '~' {
+			return fmt.Errorf("invalid domain key tag-list character")
+		}
+	}
+	return nil
+}
+
+func validKeyTagName(name string) bool {
+	if name == "" || !((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// AllowsHash reports whether an algorithm is permitted by h=. An explicitly
+// specified list containing only unknown algorithms permits no known algorithm.
+func (d *DomainKey) AllowsHash(algo HashAlgo) bool {
+	if !d.HashRestricted && len(d.HashAlgo) == 0 {
+		return true
+	}
+	for _, allowed := range d.HashAlgo {
+		if allowed == algo {
+			return true
+		}
+	}
+	return false
 }

@@ -6,17 +6,21 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
+	"strings"
 	"sync"
 
 	"github.com/masa23/mmauth/arc"
 	"github.com/masa23/mmauth/dkim"
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/bodyhash"
 	"github.com/masa23/mmauth/internal/canonical"
 	"github.com/masa23/mmauth/spf"
 )
 
 const (
-	crlf = "\r\n"
+	crlf                        = "\r\n"
+	maxDKIMSignaturesPerMessage = 20
 )
 
 type Canonicalization canonical.Canonicalization
@@ -40,6 +44,7 @@ type AuthenticationHeaders struct {
 	DKIMSignatures *dkim.Signatures
 	ARCSignatures  *arc.Signatures
 	SPFResult      *spf.Result
+	ARCError       error // malformed ARC headers; other authentication checks continue
 }
 
 func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
@@ -48,35 +53,37 @@ func parseAuthentications(headers headers) (*AuthenticationHeaders, error) {
 		return nil, fmt.Errorf("failed to parse dkim headers: %v", err)
 	}
 	a, err := arc.ParseARCHeaders(headers)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse arc headers: %v", err)
-	}
 	return &AuthenticationHeaders{
 		DKIMSignatures: d,
 		ARCSignatures:  a,
+		ARCError:       err,
 	}, nil
 }
 
 func (a *AuthenticationHeaders) BodyHashCanonAndAlgo() []BodyCanonicalizationAndAlgorithm {
 	var ret []BodyCanonicalizationAndAlgorithm
-	for _, dkim := range *a.DKIMSignatures {
-		_, body, err := parseHeaderCanonicalization(dkim.Canonicalization)
+	for _, sig := range *a.DKIMSignatures {
+		if sig == nil || sig.ParseError() != nil || sig.Algorithm == dkim.SignatureAlgorithmRSA_SHA1 {
+			continue
+		}
+		_, body, err := parseHeaderCanonicalization(sig.Canonicalization)
 		if err != nil {
 			continue
 		}
 		bca := BodyCanonicalizationAndAlgorithm{
 			Body:      body,
-			Algorithm: hashAlgo(SignatureAlgorithm(dkim.Algorithm)),
-			Limit:     dkim.Limit,
+			Algorithm: hashAlgo(SignatureAlgorithm(sig.Algorithm)),
+			Limit:     sig.Limit,
+			LimitSet:  sig.LimitSet,
 		}
 		if !isCcanonicalizationBodyAndAlgorithm(bca, ret) {
 			ret = append(ret, bca)
 		}
 	}
 
-	for _, arc := range *a.ARCSignatures {
-		ams := arc.GetARCMessageSignature()
-		if ams == nil {
+	for _, arcSet := range *a.ARCSignatures {
+		ams := arcSet.GetARCMessageSignature()
+		if ams == nil || ams.Algorithm == arc.SignatureAlgorithmRSA_SHA1 {
 			continue
 		}
 		_, body, err := parseHeaderCanonicalization(ams.Canonicalization)
@@ -145,11 +152,12 @@ func (m *MMAuth) parsedMail() {
 	m.AuthenticationHeaders, err = parseAuthentications(m.Headers)
 	if err != nil {
 		m.err = fmt.Errorf("failed to parse auth headers: %v", err)
-		if m.dkim2 != nil && !m.dkim2.skipped && !m.dkim2.overflow {
-			// DKIM-Signature and ARC fields are unsigned by DKIM2. Keep
-			// capturing the body so their syntax cannot suppress DKIM2.
-			_, _ = io.Copy(io.Discard, buf)
-		}
+		m.captureDKIM2Remainder(buf)
+		return
+	}
+	if signatures := m.AuthenticationHeaders.DKIMSignatures; signatures != nil && len(*signatures) > maxDKIMSignaturesPerMessage {
+		m.err = fmt.Errorf("too many DKIM signatures")
+		m.captureDKIM2Remainder(buf)
 		return
 	}
 
@@ -192,7 +200,8 @@ type BodyHash struct {
 
 // 同時に複数のBodyHashを計算するための構造体
 type multiBodyHash struct {
-	bodyHashList []struct {
+	canonicalizers []io.WriteCloser
+	bodyHashList   []struct {
 		*bodyhash.BodyHash
 		*BodyCanonicalizationAndAlgorithm
 		Limit int64
@@ -201,22 +210,25 @@ type multiBodyHash struct {
 
 // 同時に複数のBodyHashを計算するための構造体の初期化
 func (mh *multiBodyHash) bodyHash(bca []BodyCanonicalizationAndAlgorithm) {
+	groups := make(map[canonical.Canonicalization][]io.Writer)
 	for i, v := range bca {
+		bh := bodyhash.NewCanonicalizedBodyHash(v.Algorithm, v.Limit, v.LimitSet)
 		mh.bodyHashList = append(mh.bodyHashList, struct {
 			*bodyhash.BodyHash
 			*BodyCanonicalizationAndAlgorithm
 			Limit int64
-		}{
-			BodyHash:                         bodyhash.NewBodyHash(canonical.Canonicalization(v.Body), v.Algorithm, v.Limit),
-			BodyCanonicalizationAndAlgorithm: &bca[i],
-			Limit:                            v.Limit,
-		})
+		}{bh, &bca[i], v.Limit})
+		canon := canonical.Canonicalization(v.Body)
+		groups[canon] = append(groups[canon], bh)
+	}
+	for canon, writers := range groups {
+		mh.canonicalizers = append(mh.canonicalizers, canonical.Body(io.MultiWriter(writers...), canon))
 	}
 }
 
 // メール本文の書き込みを行う
 func (mh *multiBodyHash) Write(p []byte) (n int, err error) {
-	for _, v := range mh.bodyHashList {
+	for _, v := range mh.canonicalizers {
 		if _, err := v.Write(p); err != nil {
 			return 0, err
 		}
@@ -226,7 +238,7 @@ func (mh *multiBodyHash) Write(p []byte) (n int, err error) {
 
 // メール本文の書き込みを終了する
 func (mh *multiBodyHash) Close() error {
-	for _, v := range mh.bodyHashList {
+	for _, v := range mh.canonicalizers {
 		if err := v.Close(); err != nil {
 			return err
 		}
@@ -317,13 +329,14 @@ func (m *MMAuth) Verify() {
 					Body:      Canonicalization(can.Body),
 					Algorithm: can.HashAlgo,
 					Limit:     d.Limit,
+					LimitSet:  d.LimitSet,
 				})
 				d.Verify(m.Headers, bodyHash, nil)
 			}
 		}
 	}
 	// ARCの署名を検証する
-	if m.AuthenticationHeaders.ARCSignatures != nil {
+	if m.AuthenticationHeaders.ARCError == nil && m.AuthenticationHeaders.ARCSignatures != nil {
 		max := m.AuthenticationHeaders.ARCSignatures.GetMaxInstance()
 		for i := max; i >= 1; i-- {
 			arc := m.AuthenticationHeaders.ARCSignatures.GetInstance(i)
@@ -348,19 +361,87 @@ func (m *MMAuth) Verify() {
 	m.verifyDKIM2()
 }
 
-func evaluateSPF(remoteAddr net.IP, helo, mailFrom string) *spf.Result {
-	result := spf.CheckSPF(remoteAddr, helo, "", helo)
-	// RFC 7208準拠のSPFチェック: まずHELOで評価し、結果がnone/neutralの場合のみMAIL FROMでフォールバック
-	if result.Status == spf.None || result.Status == spf.Neutral {
-		mailFromDomain := helo
-		if mailFrom != "" {
-			if d, err := ParseAddressDomain(mailFrom); err == nil {
-				mailFromDomain = d
+// parseMailFromIdentity accepts a mailbox or its SMTP path form, without a
+// display name or trailing data. The domain is shared by SPF and DMARC.
+func parseMailFromIdentity(mailFrom string) (string, string, error) {
+	sender := mailFrom
+	path := strings.HasPrefix(sender, "<") && strings.HasSuffix(sender, ">")
+	if path {
+		sender = sender[1 : len(sender)-1]
+	}
+	if strings.ContainsAny(sender, "\r\n") {
+		return "", "", fmt.Errorf("invalid MAIL FROM")
+	}
+	if strings.HasPrefix(sender, "@") {
+		if !path {
+			return "", "", fmt.Errorf("invalid MAIL FROM")
+		}
+		route, mailbox, ok := strings.Cut(sender, ":")
+		if !ok || mailbox == "" {
+			return "", "", fmt.Errorf("invalid MAIL FROM")
+		}
+		for _, atDomain := range strings.Split(route, ",") {
+			if !strings.HasPrefix(atDomain, "@") || !validSMTPRouteDomain(atDomain[1:]) {
+				return "", "", fmt.Errorf("invalid MAIL FROM")
 			}
 		}
-		result = spf.CheckSPF(remoteAddr, mailFromDomain, mailFrom, helo)
+		sender = mailbox // RFC 5321 source routes are ignored for SPF identity.
 	}
-	return result
+	// An SMTP mailbox has no CFWS. Header address parsing can accept comments
+	// or whitespace that is only valid inside a quoted local part here.
+	inQuotedLocalPart, escaped := false, false
+	for i := 0; i < len(sender); i++ {
+		switch c := sender[i]; {
+		case escaped:
+			escaped = false
+		case inQuotedLocalPart && c == '\\':
+			escaped = true
+		case c == '"':
+			inQuotedLocalPart = !inQuotedLocalPart
+		case !inQuotedLocalPart && (c == ' ' || c == '\t' || c == '(' || c == ')' || c == '<' || c == '>'):
+			return "", "", fmt.Errorf("invalid MAIL FROM")
+		}
+	}
+	addr, err := mail.ParseAddress(sender)
+	if err != nil || addr.Name != "" {
+		return "", "", fmt.Errorf("invalid MAIL FROM")
+	}
+	at := strings.LastIndexByte(sender, '@')
+	if at < 0 || at == len(sender)-1 {
+		return "", "", fmt.Errorf("invalid MAIL FROM")
+	}
+	return sender, sender[at+1:], nil
+}
+
+func validSMTPRouteDomain(domain string) bool {
+	if domain == "" || len(domain) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			ch := label[i]
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// evaluateSPFIdentity evaluates the MAIL FROM identity and returns the same
+// validated domain for DMARC alignment. Null reverse paths use HELO.
+func evaluateSPFIdentity(remoteAddr net.IP, helo, mailFrom string) (*spf.Result, string) {
+	if mailFrom == "" || mailFrom == "<>" {
+		return spf.CheckSPF(remoteAddr, helo, "", helo), helo
+	}
+	sender, domain, err := parseMailFromIdentity(mailFrom)
+	if err != nil {
+		return &spf.Result{Status: spf.None, Reason: "invalid MAIL FROM"}, ""
+	}
+	return spf.CheckSPF(remoteAddr, domain, sender, helo), domain
 }
 
 // GetAuthenticationHeaderは認証結果を配列形式で返す。
@@ -372,11 +453,22 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 		return nil
 	}
 	// SPFチェックを行う
-	spfResult := evaluateSPF(remoteAddr, helo, mailFrom)
+	spfResult, spfDomain := evaluateSPFIdentity(remoteAddr, helo, mailFrom)
 
 	var results []string
 	if spfResult != nil {
-		results = append(results, fmt.Sprintf("spf=%s smtp.mailfrom=%s smtp.helo=%s", spfResult.Status, mailFrom, helo))
+		fragment := fmt.Sprintf("spf=%s", spfResult.Status)
+		if mailFrom == "" || mailFrom == "<>" {
+			if authres.ValidDomainValue(helo) {
+				fragment += " smtp.helo=" + helo
+			}
+		} else if authres.ValidDomainValue(spfDomain) {
+			// RFC 8601 §2.7.2 recommends omitting the local part
+			// because SPF does not authenticate it.
+			fragment += " smtp.mailfrom=" + spfDomain
+		}
+		results = append(results, fragment)
+		m.AuthenticationHeaders.SPFResult = spfResult
 	}
 
 	// DKIM
@@ -392,7 +484,9 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 
 	// ARC
 	arcSigns := m.AuthenticationHeaders.ARCSignatures
-	if arcSigns != nil {
+	if m.AuthenticationHeaders.ARCError != nil {
+		results = append(results, "arc=fail (malformed ARC headers)")
+	} else if arcSigns != nil {
 		results = append(results, arcSigns.GetVerifyResultString())
 	}
 	if m.dkim2 != nil && m.dkim2.state.Checked {
@@ -404,7 +498,7 @@ func (m *MMAuth) GetAuthenticationHeader(remoteAddr net.IP, helo, mailFrom strin
 
 func (m *MMAuth) GetBodyHash(bca BodyCanonicalizationAndAlgorithm) string {
 	for _, bh := range m.bodyHashed {
-		if bh.Algorithm.Algorithm == bca.Algorithm && bh.Algorithm.Body == bca.Body && bh.Limit == bca.Limit {
+		if bh.Algorithm.Algorithm == bca.Algorithm && bh.Algorithm.Body == bca.Body && bh.Limit == bca.Limit && (bca.Limit > 0 || bh.Algorithm.LimitSet == bca.LimitSet) {
 			return bh.BodyHash
 		}
 	}

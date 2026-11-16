@@ -5,21 +5,30 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ParseSignatureParams parses DKIM-Signature header parameters with strict validation
 // according to RFC 6376 requirements.
 func ParseSignatureParams(s string) (map[string]string, error) {
+	if err := validateTagListCharacters(s); err != nil {
+		return nil, err
+	}
 	pairs := strings.Split(s, ";")
 	params := make(map[string]string)
 
 	// Track seen tags to detect duplicates
 	seenTags := make(map[string]bool)
+	// RFC 6376 §3.5 requires v= but does not constrain its position. The
+	// first-tag rule in §3.6.1 applies to DKIM key records only.
 
-	for _, pair := range pairs {
+	for index, pair := range pairs {
 		trimmedPair := strings.TrimSpace(pair)
 		if trimmedPair == "" {
-			continue
+			if index == len(pairs)-1 && index > 0 {
+				continue // one optional trailing semicolon
+			}
+			return nil, errors.New("malformed header params")
 		}
 
 		key, value, ok := strings.Cut(trimmedPair, "=")
@@ -27,23 +36,14 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 			return nil, errors.New("malformed header params")
 		}
 
-		trimmedKey := strings.ToLower(strings.TrimSpace(key))
+		trimmedKey := strings.TrimSpace(key)
 
 		// Check for empty tag name
-		if trimmedKey == "" {
+		if !validTagName(trimmedKey) {
 			return nil, errors.New("malformed header params")
 		}
 
-		// Check for excessively long tag name
-		if len(trimmedKey) > 100 {
-			return nil, errors.New("malformed header params")
-		}
-
-		// Check for excessively long tag value
 		trimmedValue := strings.TrimSpace(value)
-		if len(trimmedValue) > 1000 {
-			return nil, errors.New("malformed header params")
-		}
 
 		// Check for duplicate tags (RFC 6376 §3.2 requires meticulous validation)
 		if seenTags[trimmedKey] {
@@ -72,6 +72,43 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	if params["v"] != "1" {
 		return nil, fmt.Errorf("invalid version tag value: %s", params["v"])
 	}
+	for _, tag := range []string{"d", "s"} {
+		if strings.IndexAny(params[tag], " \t\r\n") >= 0 {
+			return nil, fmt.Errorf("invalid %s= identifier", tag)
+		}
+	}
+	for _, rawName := range strings.Split(params["h"], ":") {
+		name := strings.Trim(rawName, " \t\r\n")
+		if name == "" || strings.IndexAny(name, " \t\r\n") >= 0 {
+			return nil, fmt.Errorf("invalid h= signed header name")
+		}
+	}
+	// RFC 6376 §3.5 permits FWS around a= but not inside its algorithm.
+	if strings.IndexAny(params["a"], " \t\r\n") >= 0 {
+		return nil, fmt.Errorf("invalid algorithm tag value: %q", params["a"])
+	}
+	if canonicalization, present := params["c"]; present {
+		// An explicit c= needs an algorithm; the simple/simple default only
+		// applies when c= is absent. RFC 6376 permits no FWS inside this value.
+		if canonicalization == "" || strings.IndexAny(canonicalization, " \t\r\n") >= 0 {
+			return nil, fmt.Errorf("invalid canonicalization tag value: %q", canonicalization)
+		}
+	}
+	if methods, present := params["q"]; present {
+		for _, rawMethod := range strings.Split(methods, ":") {
+			method := strings.Trim(rawMethod, " \t\r\n")
+			if method == "" {
+				return nil, fmt.Errorf("invalid query method tag value: %q", methods)
+			}
+			if strings.EqualFold(method, "dns/txt") {
+				continue
+			}
+			name, args, hasArgs := strings.Cut(method, "/")
+			if !validHyphenatedWord(name) || (hasArgs && !validDKIMQuotedPrintable(args)) {
+				return nil, fmt.Errorf("invalid query method tag value: %q", methods)
+			}
+		}
+	}
 
 	// Type validation for specific tags
 	if err := validateTagTypes(params); err != nil {
@@ -79,6 +116,82 @@ func ParseSignatureParams(s string) (map[string]string, error) {
 	}
 
 	return params, nil
+}
+
+func validHyphenatedWord(value string) bool {
+	if value == "" || !isASCIIAlpha(value[0]) {
+		return false
+	}
+	for i := 1; i < len(value); i++ {
+		ch := value[i]
+		if !isASCIIAlpha(ch) && (ch < '0' || ch > '9') && ch != '-' {
+			return false
+		}
+	}
+	return value[len(value)-1] != '-'
+}
+
+// RFC 6376 §2.11 permits FWS and extra '/' characters in extension args,
+// but every '=' must begin an uppercase hexadecimal escape.
+func validDKIMQuotedPrintable(value string) bool {
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		switch ch {
+		case '=':
+			if i+2 >= len(value) || !isUpperHex(value[i+1]) || !isUpperHex(value[i+2]) {
+				return false
+			}
+			i += 2
+		case ' ', '\t', '\r', '\n':
+			// validateTagListCharacters already checked that CRLF is FWS.
+		default:
+			if !((ch >= '!' && ch <= ':') || ch == '<' || (ch >= '>' && ch <= '~')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isUpperHex(ch byte) bool {
+	return ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'F'
+}
+
+func validateTagListCharacters(value string) error {
+	if !utf8.ValidString(value) {
+		return errors.New("invalid DKIM tag-list UTF-8")
+	}
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if ch == '\r' {
+			if i+2 >= len(value) || value[i+1] != '\n' || (value[i+2] != ' ' && value[i+2] != '\t') {
+				return errors.New("invalid DKIM tag-list folding")
+			}
+			i++
+			continue
+		}
+		if ch == '\n' || (ch < ' ' && ch != '\t') || ch > '~' {
+			return errors.New("invalid DKIM tag-list character")
+		}
+	}
+	return nil
+}
+
+func validTagName(name string) bool {
+	if name == "" || !isASCIIAlpha(name[0]) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		ch := name[i]
+		if !isASCIIAlpha(ch) && (ch < '0' || ch > '9') && ch != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlpha(ch byte) bool {
+	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
 }
 
 // isValidDKIMTag checks if a tag is a recognized DKIM-Signature tag according to RFC 6376
@@ -108,12 +221,18 @@ func isValidDKIMTag(tag string) bool {
 func validateTagTypes(params map[string]string) error {
 	// Validate t and x tags (timestamps) - must be integers
 	if tVal, exists := params["t"]; exists {
+		if len(tVal) > 12 || !isUnsignedDecimal(tVal) {
+			return fmt.Errorf("invalid timestamp 't' value: %s", tVal)
+		}
 		if _, err := strconv.ParseInt(tVal, 10, 64); err != nil {
 			return fmt.Errorf("invalid timestamp 't' value: %s", tVal)
 		}
 	}
 
 	if xVal, exists := params["x"]; exists {
+		if len(xVal) > 12 || !isUnsignedDecimal(xVal) {
+			return fmt.Errorf("invalid expiration 'x' value: %s", xVal)
+		}
 		if _, err := strconv.ParseInt(xVal, 10, 64); err != nil {
 			return fmt.Errorf("invalid expiration 'x' value: %s", xVal)
 		}
@@ -121,6 +240,9 @@ func validateTagTypes(params map[string]string) error {
 
 	// Validate l tag (body length) - must be non-negative integer
 	if lVal, exists := params["l"]; exists {
+		if !isUnsignedDecimal(lVal) {
+			return fmt.Errorf("invalid body length 'l' value: %s", lVal)
+		}
 		l, err := strconv.ParseInt(lVal, 10, 64)
 		if err != nil {
 			return fmt.Errorf("invalid body length 'l' value: %s", lVal)
@@ -135,4 +257,16 @@ func validateTagTypes(params map[string]string) error {
 	}
 
 	return nil
+}
+
+func isUnsignedDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

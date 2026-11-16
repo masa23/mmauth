@@ -3,7 +3,7 @@ package spf
 import (
 	"fmt"
 	"strings"
-	"time"
+	"unicode"
 )
 
 type Mechanism string
@@ -95,18 +95,32 @@ func validateMacroSyntax(s string) error {
 	return err
 }
 
+// Validate without expanding macros: parsing must never perform DNS lookups.
+func validateDomainMacros(value string) error {
+	tokens, err := parseMacroString(value)
+	if err != nil {
+		return err
+	}
+	for _, tok := range tokens {
+		if tok.Kind == TokenMacro && strings.ContainsRune("crt", unicode.ToLower(tok.Macro.Letter)) {
+			return fmt.Errorf("macro %c only allowed in explanation text", tok.Macro.Letter)
+		}
+	}
+	return nil
+}
+
 // ParseRecord は SPF レコード文字列を Record 構造体に解析します。
 func ParseRecord(record string) (*Record, *Result) {
 	var rec Record
 	rec.Raw = record
-	// RFC 7208 4.5/2 に従って末尾のスペースをトリム
-	record = strings.TrimRight(record, " \t")
+	// RFC 7208 §4.5 allows trailing SP, but not trailing HTAB.
+	record = strings.TrimRight(record, " ")
 
 	// nospace1ケースの確認：レコードが"v=spf1"で始まるが、次の文字がスペースまたは文字列の終わりでない場合、
 	// これは無効なレコードです。これは、スペースなしで結合されたTXTフラグメントを処理します。
 	if strings.HasPrefix(record, "v=spf1") {
-		if len(record) > 6 && record[6] != ' ' && record[6] != '\t' {
-			// "v=spf1"の後の文字がスペースまたはタブではないため、有効なSPFレコードではありません
+		if len(record) > 6 && record[6] != ' ' {
+			// "v=spf1"の後が SP または終端でなければ SPF 候補ではありません。
 			return nil, &Result{Status: None, Reason: "invalid SPF record: no space after version"}
 		}
 	}
@@ -126,18 +140,10 @@ func ParseRecord(record string) (*Record, *Result) {
 		return nil, &Result{Status: PermError, Reason: "invalid SPF record: empty"}
 	}
 
-	// RFC 7208: SPFレコードは7ビットASCIIで、制御文字を含んではなりません
+	// RFC 7208 §4.6.1 uses SP to separate terms; HTAB is a syntax error.
 	for _, r := range record {
-		// 表示可能なASCII文字（スペースからチルダ）とタブを許可
 		if r < 32 || r > 126 {
-			// タブ（ASCII 9）とスペース（ASCII 32）を許可
-			if r != '\t' && r != ' ' {
-				return nil, &Result{Status: PermError, Reason: "SPF record contains invalid characters"}
-			}
-		}
-		// 非ASCII文字の確認
-		if r > 127 {
-			return nil, &Result{Status: PermError, Reason: "SPF record contains non-ASCII characters"}
+			return nil, &Result{Status: PermError, Reason: "SPF record contains invalid characters"}
 		}
 	}
 
@@ -226,36 +232,14 @@ func ParseRecord(record string) (*Record, *Result) {
 						return nil, &Result{Status: PermError, Reason: "exp= modifier value is not a valid domain-spec"}
 					}
 				}
-				// For exp= modifier, store the raw value and also pre-expand it with MacroPurposeDomainSpec
-				// to comply with pyspf test suite expectations.
-				if Modifier(name) == ModifierExp {
-					// Create a dummy context for macro expansion during parsing
-					// This is a workaround to satisfy the pyspf test suite.
-					dummyCtx := &MacroContext{
-						Sender:   "dummy@example.com",
-						Domain:   "example.com",
-						Helo:     "example.com",
-						Receiver: "example.com",
-						IP:       nil,
-						Now:      time.Now(),
-					}
-					resolver := &dnsResolverImpl{}
-					expandedValue, err := resolver.ReplaceMacroValues(value, *dummyCtx, MacroPurposeDomainSpec)
-					if err != nil {
-						return nil, &Result{Status: PermError, Reason: fmt.Sprintf("invalid %s: %v", name, err)}
-					}
-					rec.Modifiers = append(rec.Modifiers, ModifierEntry{
-						Modifier: Modifier(name),
-						Value:    expandedValue, // Store expanded value for compatibility
-					})
-					// exp=修飾子の値を記録（生の、未展開の状態）
-					rec.Exp = value
-				} else {
-					rec.Modifiers = append(rec.Modifiers, ModifierEntry{
-						Modifier: Modifier(name),
-						Value:    value, // Store raw value, no macro expansion
-					})
+				if err := validateDomainMacros(value); err != nil {
+					return nil, &Result{Status: PermError, Reason: fmt.Sprintf("invalid %s: %v", name, err)}
 				}
+				rec.Modifiers = append(rec.Modifiers, ModifierEntry{Modifier: Modifier(name), Value: value})
+				if Modifier(name) == ModifierExp {
+					rec.Exp = value
+				}
+
 			default:
 				// RFC 7208 6.3: 不明なメカニズムと修飾子は無視しなければなりません。
 				// ただし、不明な修飾子に無効なマクロ構文がある場合、

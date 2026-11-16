@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode"
 
@@ -24,10 +25,46 @@ var (
 	ErrInvalidEmailFormat = errors.New("invalid email address format")
 )
 
+// EqualASCIIFold compares RFC 5322 field names without Unicode case folding.
+// Field names consist only of ASCII bytes, so non-ASCII lookalikes must differ.
+func EqualASCIIFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if x > 127 || y > 127 {
+			return false
+		}
+		if x >= 'A' && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if y >= 'A' && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
+func lowerASCIIFieldName(name string) (string, bool) {
+	if name == "" {
+		return "", false
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < '!' || name[i] > '~' || name[i] == ':' {
+			return "", false
+		}
+	}
+	return strings.ToLower(name), true
+}
+
 // ヘッダをパースする
 func ParseHeaderField(s string) (string, string) {
 	key, value, _ := strings.Cut(s, ":")
-	return strings.TrimSpace(key), strings.TrimSpace(value)
+	return strings.Trim(key, " \t"), strings.TrimSpace(value)
 }
 
 // ヘッダのパラメータをパースする
@@ -94,7 +131,7 @@ func Signer(headers []string, key crypto.Signer, canon canonical.Canonicalizatio
 // header field is hashed without its terminating CRLF.
 func SignerWithOmitLastCRLF(headers []string, key crypto.Signer, canon canonical.Canonicalization, hashAlgo crypto.Hash, omitLastCRLF bool) (string, error) {
 	// keyがnilの場合はエラーを返す
-	if key == nil {
+	if IsNilSigner(key) {
 		return "", errors.New("private key is nil")
 	}
 
@@ -151,6 +188,19 @@ func SignerWithOmitLastCRLF(headers []string, key crypto.Signer, canon canonical
 	return b64, nil
 }
 
+// IsNilSigner also detects a typed nil stored inside the crypto.Signer interface.
+func IsNilSigner(key crypto.Signer) bool {
+	if key == nil {
+		return true
+	}
+	value := reflect.ValueOf(key)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	}
+	return false
+}
+
 // relaxed/simpleなどの文字列をパースしてcanonicalizationを返す
 func ParseHeaderCanonicalization(s string) (header canonical.Canonicalization, body canonical.Canonicalization, err error) {
 	if s == "" {
@@ -158,16 +208,17 @@ func ParseHeaderCanonicalization(s string) (header canonical.Canonicalization, b
 		return canonical.Simple, canonical.Simple, nil
 	}
 	ret := strings.Split(s, "/")
-	if len(ret) != 2 {
-		// 一つしかしていない場合はヘッダーに適用
-		// bodyはsimple
-		return canonical.Canonicalization(ret[0]), canonical.Simple, nil
+	if len(ret) > 2 {
+		return "", "", fmt.Errorf("invalid canonicalization")
 	}
 	switch canonical.Canonicalization(ret[0]) {
 	case canonical.Simple, canonical.Relaxed:
 		header = canonical.Canonicalization(ret[0])
 	default:
 		return "", "", fmt.Errorf("invalid canonicalization")
+	}
+	if len(ret) == 1 {
+		return header, canonical.Simple, nil
 	}
 	switch canonical.Canonicalization(ret[1]) {
 	case canonical.Simple, canonical.Relaxed:
@@ -222,13 +273,19 @@ func ExtractHeadersDKIM(headers []string, keys []string) []string {
 		if !ok {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(k))
+		key, valid := lowerASCIIFieldName(strings.Trim(k, " \t"))
+		if !valid {
+			continue
+		}
 		byName[key] = append(byName[key], header)
 	}
 
 	// keysの左から順に処理
 	for _, key := range keys {
-		key = strings.ToLower(strings.TrimSpace(key))
+		key, valid := lowerASCIIFieldName(strings.Trim(key, " \t"))
+		if !valid {
+			continue
+		}
 
 		// 同名ヘッダが複数存在する場合はメッセージ内の末尾側（bottom-most）から1つずつ取り出して消費
 		if headersForKey, exists := byName[key]; exists && len(headersForKey) > 0 {
@@ -279,7 +336,7 @@ func extractHeaders(headers []string, keys []string) []map[string][]string {
 			if !ok {
 				continue
 			}
-			if strings.EqualFold(strings.TrimSpace(k), key) {
+			if EqualASCIIFold(strings.Trim(k, " \t"), key) {
 				if !mapsContainsKey(maps, key) {
 					maps = append(maps, map[string][]string{key: {header}})
 				} else {
@@ -312,7 +369,7 @@ func ExtractHeader(headers []string, key string) string {
 		if !ok {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(k), key) {
+		if EqualASCIIFold(strings.Trim(k, " \t"), key) {
 			return k + ":" + v
 		}
 	}

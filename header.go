@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"crypto"
 	"fmt"
-	"net/textproto"
+	"io"
 	"strings"
 
 	"github.com/masa23/mmauth/internal/canonical"
@@ -15,14 +15,18 @@ type headers []string
 
 // ヘッダを読み込み分解する
 func readHeader(r *bufio.Reader) (headers, error) {
-	tr := textproto.NewReader(r)
-
 	var h headers
 	for {
-		l, err := tr.ReadLine()
+		l, err := r.ReadString('\n')
 		if err != nil {
+			// RFC 5322 permits headers without a body or separator. Accept EOF
+			// only after complete header lines, keeping truncated lines invalid.
+			if err == io.EOF && l == "" && len(h) > 0 {
+				break
+			}
 			return h, fmt.Errorf("failed to read header: %v", err)
 		}
+		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
 
 		if len(l) == 0 {
 			break
@@ -34,7 +38,28 @@ func readHeader(r *bufio.Reader) (headers, error) {
 		}
 	}
 
+	if !validHeaderFieldNames(h) {
+		return h, fmt.Errorf("failed to read header: invalid header field")
+	}
 	return h, nil
+}
+
+func validHeaderFieldNames(h headers) bool {
+	for _, field := range h {
+		name, _, ok := strings.Cut(field, ":")
+		// RFC 5322 section 4.5.8 permits SP/HTAB before the colon.
+		name = strings.TrimRight(name, " \t")
+		if !ok || name == "" {
+			return false
+		}
+		for i := 0; i < len(name); i++ {
+			// RFC 5322 ftext is printable ASCII excluding the colon.
+			if name[i] < 33 || name[i] > 126 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func hashAlgo(algo SignatureAlgorithm) crypto.Hash {
@@ -54,11 +79,13 @@ type BodyCanonicalizationAndAlgorithm struct {
 	Body      Canonicalization
 	Algorithm crypto.Hash
 	Limit     int64
+	// LimitSet distinguishes explicit l=0 from an omitted body length.
+	LimitSet bool
 }
 
 func isCcanonicalizationBodyAndAlgorithm(c BodyCanonicalizationAndAlgorithm, can []BodyCanonicalizationAndAlgorithm) bool {
 	for _, v := range can {
-		if v.Body == c.Body && v.Algorithm == c.Algorithm && v.Limit == c.Limit {
+		if v.Body == c.Body && v.Algorithm == c.Algorithm && v.Limit == c.Limit && (v.Limit > 0 || v.LimitSet == c.LimitSet) {
 			return true
 		}
 	}

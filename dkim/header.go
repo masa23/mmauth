@@ -28,6 +28,8 @@ func (d *Signatures) GetResult() VerifyStatus {
 	return VerifyStatusPass
 }
 
+// ParseDKIMHeaders preserves malformed signatures with a permerror result so
+// that other signatures can still be verified. ParseSignature remains strict.
 func ParseDKIMHeaders(headers []string) (*Signatures, error) {
 	var sigs Signatures
 	for _, h := range headers {
@@ -36,7 +38,8 @@ func ParseDKIMHeaders(headers []string) (*Signatures, error) {
 		case "dkim-signature":
 			sig, err := ParseSignature(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse dkim-signature: %v", err)
+				parseErr := fmt.Errorf("failed to parse dkim-signature: %w", err)
+				sig = &Signature{raw: h, parseErr: parseErr, VerifyResult: &VerifyResult{status: VerifyStatusPermErr, err: parseErr, msg: "malformed signature"}}
 			}
 			sigs = append(sigs, sig)
 		}

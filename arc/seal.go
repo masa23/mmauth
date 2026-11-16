@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/masa23/mmauth/domainkey"
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/canonical"
+	"github.com/masa23/mmauth/internal/dkimheader"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -26,6 +28,7 @@ type ARCSeal struct {
 	Timestamp       int64                 // t timestamp
 	raw             string
 	hashAlgo        crypto.Hash
+	invalid         bool
 }
 
 func (as *ARCSeal) Raw() string {
@@ -61,29 +64,26 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 	result.raw = s
 
 	// ヘッダと値に分割
-	k, v := header.ParseHeaderField(s)
-	if !strings.EqualFold(k, "arc-seal") {
+	name, v, ok := strings.Cut(s, ":")
+	if !ok || !header.EqualASCIIFold(name, "ARC-Seal") {
 		return nil, fmt.Errorf("invalid header field")
 	}
-	fields := strings.Split(v, ";")
-
-	for _, field := range fields {
-		keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
-
-		if len(keyValue) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(keyValue[0])
-		value := header.StripWhiteSpace(keyValue[1])
+	v = strings.TrimSuffix(v, "\r\n")
+	tags, err := parseSignatureTags(v, "ARC-Seal", []string{"cv", "i", "a", "b", "d", "s"})
+	if err != nil {
+		return nil, err
+	}
+	for _, tag := range tags {
+		key, value := tag.key, tag.value
 
 		// Check for forbidden tags according to RFC 8617 Section 4.1.3
 		// "Note especially that the DKIM "h" tag is NOT allowed and, if found, MUST result in a cv status of "fail""
 		// Also, the "bh" tag is not allowed as ARC-Seal signatures don't cover the message body.
 		// RFC 8617: ARC-Seal に h= は NOT allowed, 見つけたら cv=fail
-		// Normalize key to lowercase for comparison to catch case-insensitive matches
-		if strings.ToLower(key) == "h" || strings.ToLower(key) == "bh" {
-			result.ChainValidation = ChainValidationResultFail
+		// RFC 6376 §3.2 treats tag names as case-sensitive; H and BH are
+		// unknown tags, while the defined h and bh tags are forbidden here.
+		if key == "h" || key == "bh" {
+			result.invalid = true
 			// エラーを返さずに、パースを継続
 			continue
 		}
@@ -121,11 +121,15 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 			}
 			result.Timestamp = timestamp
 		case "cv":
+			value = strings.ToLower(value)
 			if !isChainValidationResult(value) {
 				return nil, fmt.Errorf("invalid chain validation result")
 			}
 			result.ChainValidation = ChainValidationResult(value)
 		}
+	}
+	if result.invalid {
+		result.ChainValidation = ChainValidationResultFail
 	}
 	result.hashAlgo = hashAlgo(result.Algorithm)
 
@@ -134,6 +138,12 @@ func ParseARCSeal(s string) (*ARCSeal, error) {
 
 // ARC-Seal の署名
 func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
+	if header.IsNilSigner(key) {
+		return fmt.Errorf("private key is nil")
+	}
+	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {
+		return fmt.Errorf("invalid ARC instance")
+	}
 	// timestampを設定
 	if as.Timestamp == 0 {
 		as.Timestamp = time.Now().Unix()
@@ -150,11 +160,28 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 			return fmt.Errorf("unknown key type: %T", key.Public())
 		}
 	}
+	if err := validateSigningCryptoPolicy(as.Algorithm, key); err != nil {
+		return err
+	}
 
 	// ハッシュアルゴリズムを設定
 	as.hashAlgo = hashAlgo(as.Algorithm)
 	// 署名対象ヘッダを構築する（RFC 8617: i=N の ARC-Seal は、i=1..N-1 の AAR/AMS/AS と、i=N の AAR/AMS と、b= を空にした AS(N) を署名する）
 	extractedHeaders := header.ExtractHeadersAll(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
+
+	firstInstance := 1
+	if as.ChainValidation == ChainValidationResultFail {
+		// RFC 8617 §5.1.2: only the newly created set is sealed when the
+		// incoming chain failed. Historical headers need not even parse.
+		firstInstance = as.InstanceNumber
+		var current []string
+		for _, raw := range extractedHeaders {
+			if n, ok := arcHeaderInstance(raw); ok && n == as.InstanceNumber {
+				current = append(current, raw)
+			}
+		}
+		extractedHeaders = current
+	}
 
 	// 既存のARCヘッダをパースして、署名対象の順序で並べ替える
 	ah, err := parseARCHeaders(extractedHeaders)
@@ -163,7 +190,7 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 	}
 
 	var sortedHeaders []string
-	for i := 1; i < as.InstanceNumber; i++ {
+	for i := firstInstance; i < as.InstanceNumber; i++ {
 		arc := ah.getInstance(i)
 		// 既存インスタンスは AAR/AMS/AS が揃っている必要がある
 		if arc.arcAuthenticationResults == nil || arc.arcMessageSignature == nil || arc.arcSeal == nil {
@@ -200,8 +227,14 @@ func (as *ARCSeal) Sign(headers []string, key crypto.Signer) error {
 
 // ARC-Seal の検証
 func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *VerifyResult {
+	if as.InstanceNumber < 1 || as.InstanceNumber > 50 {
+		return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("invalid ARC instance"), msg: "invalid ARC instance"}
+	}
+	if !isChainValidationResult(string(as.ChainValidation)) {
+		return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("invalid ARC cv"), msg: "invalid ARC cv"}
+	}
 	// cv=fail の場合は即座に fail を返す
-	if as.ChainValidation == ChainValidationResultFail {
+	if as.invalid || as.ChainValidation == ChainValidationResultFail {
 		return &VerifyResult{
 			status:    VerifyStatusFail,
 			err:       fmt.Errorf("chain validation result is fail"),
@@ -209,11 +242,24 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 			domainKey: domainKey,
 		}
 	}
+	if as.Algorithm == SignatureAlgorithmRSA_SHA1 {
+		err := fmt.Errorf("ARC: rsa-sha1 is a historic algorithm")
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "historic signature algorithm", domainKey: domainKey}
+	}
 
 	// domainKeyがnilの場合はLookupDomainKeyを実行
 	if domainKey == nil {
-		domKey, err := domainkey.LookupARCDomainKey(as.Selector, as.Domain)
-		if errors.Is(err, domainkey.ErrNoRecordFound) {
+		selector, selectorErr := arcDNSName(as.Selector, 1)
+		domain, domainErr := arcDNSName(as.Domain, 2)
+		if selectorErr != nil || domainErr != nil {
+			return &VerifyResult{status: VerifyStatusPermErr, err: fmt.Errorf("invalid ARC signing identifier"), msg: "invalid signing identifier"}
+		}
+		domKey, err := domainkey.LookupARCDomainKey(selector, domain)
+		if errors.Is(err, domainkey.ErrInvalidVersion) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key version"}
+		} else if errors.Is(err, domainkey.ErrInvalidKeyType) {
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "invalid domain key type"}
+		} else if errors.Is(err, domainkey.ErrNoRecordFound) {
 			return &VerifyResult{
 				status: VerifyStatusPermErr,
 				err:    fmt.Errorf("domain key is not found: %v", err),
@@ -228,6 +274,9 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 		}
 		domainKey = &domKey
 	}
+	if err := validateDomainKeyPolicy(domainKey, as.Algorithm); err != nil {
+		return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: err.Error(), domainKey: domainKey}
+	}
 
 	if as.raw == "" {
 		return &VerifyResult{
@@ -239,9 +288,24 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 	}
 
 	// ヘッダの抽出と連結
-	h := header.ExtractHeadersAll(headers, []string{"ARC-Authentication-Results", "ARC-Message-Signature", "ARC-Seal"})
-	h = append(h, header.DeleteSignature(as.raw))
-	h = arcHeaderSort(h)
+	sets, err := parseARCHeadersThrough(headers, as.InstanceNumber)
+	if err != nil {
+		return &VerifyResult{status: VerifyStatusFail, err: err, msg: "invalid ARC headers"}
+	}
+	// Replace only the current seal with its empty-b= form; later sets did not
+	// exist when this seal was signed and must not contribute to its hash.
+	current := sets.getInstance(as.InstanceNumber)
+	placeholder := *as
+	placeholder.raw = dkimheader.StripBValueForSigning(as.raw)
+	current.arcSeal = &placeholder
+	var h []string
+	for i := 1; i <= as.InstanceNumber; i++ {
+		set := sets.getInstance(i)
+		if set.arcAuthenticationResults == nil || set.arcMessageSignature == nil || set.arcSeal == nil {
+			return &VerifyResult{status: VerifyStatusFail, err: fmt.Errorf("missing ARC headers for instance %d", i), msg: "ARC set is incomplete"}
+		}
+		h = append(h, set.arcAuthenticationResults.raw, set.arcMessageSignature.raw, set.arcSeal.raw)
+	}
 
 	// ヘッダの正規化
 	var s string
@@ -289,6 +353,10 @@ func (as *ARCSeal) Verify(headers []string, domainKey *domainkey.DomainKey) *Ver
 
 	switch pub := pub.(type) {
 	case *rsa.PublicKey:
+		if pub.N.BitLen() < 1024 {
+			err := fmt.Errorf("ARC: RSA verification key is shorter than 1024 bits")
+			return &VerifyResult{status: VerifyStatusPermErr, err: err, msg: "RSA key is too short", domainKey: domainKey}
+		}
 		if err := rsa.VerifyPKCS1v15(pub, as.hashAlgo, hash.Sum(nil), signature); err != nil {
 			return &VerifyResult{
 				status:    VerifyStatusFail,
@@ -371,9 +439,18 @@ func (s *signatures) getMaxInstance() int {
 }
 
 func parseARCHeaders(headers []string) (*signatures, error) {
+	return parseARCHeadersThrough(headers, 0)
+}
+
+// A positive maxInstance limits parsing to the sets covered by a single seal.
+// Full-chain parsing and signing use zero to retain validation of every set.
+func parseARCHeadersThrough(headers []string, maxInstance int) (*signatures, error) {
 	var sigs signatures
 
 	for _, h := range headers {
+		if maxInstance > 0 && isLaterARCHeader(h, maxInstance) {
+			continue
+		}
 		k, _ := header.ParseHeaderField(h)
 		switch strings.ToLower(k) {
 		case "arc-seal":
@@ -381,24 +458,96 @@ func parseARCHeaders(headers []string) (*signatures, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-seal: %v", err)
 			}
+			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
+				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
+			}
 			as := sigs.getInstance(ret.InstanceNumber)
+			if as.arcSeal != nil {
+				return nil, fmt.Errorf("duplicate ARC header for instance %d", ret.InstanceNumber)
+			}
 			as.arcSeal = ret
 		case "arc-authentication-results":
 			ret, err := ParseARCAuthenticationResults(h)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
+				// RFC 8617 §3.4: syntax of the authres-payload does not affect
+				// chain validity. Keep the signed header and its instance even
+				// when the assessment cannot be interpreted as RFC 8601.
+				ret, err = parseAARForChain(h)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse arc-authentication-results: %v", err)
+				}
+			}
+			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
+				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
 			}
 			as := sigs.getInstance(ret.InstanceNumber)
+			if as.arcAuthenticationResults != nil {
+				return nil, fmt.Errorf("duplicate ARC header for instance %d", ret.InstanceNumber)
+			}
 			as.arcAuthenticationResults = ret
 		case "arc-message-signature":
 			ret, err := ParseARCMessageSignature(h)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse arc-message-signature: %v", err)
 			}
+			if ret.InstanceNumber < 1 || ret.InstanceNumber > 50 {
+				return nil, fmt.Errorf("invalid ARC instance: %d", ret.InstanceNumber)
+			}
 			as := sigs.getInstance(ret.InstanceNumber)
+			if as.arcMessageSignature != nil {
+				return nil, fmt.Errorf("duplicate ARC header for instance %d", ret.InstanceNumber)
+			}
 			as.arcMessageSignature = ret
 		}
 	}
 
 	return &sigs, nil
+}
+
+func parseAARForChain(raw string) (*ARCAuthenticationResults, error) {
+	name, value, ok := strings.Cut(raw, ":")
+	if !ok || !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
+		return nil, fmt.Errorf("invalid header field")
+	}
+	value = strings.TrimSuffix(value, "\r\n")
+	if err := authres.ValidateFieldValue(value); err != nil {
+		return nil, err
+	}
+	// The payload is authenticated as raw bytes by the ARC-Seal.
+	instance, _, err := authres.ParseARCInstance(value)
+	if err != nil {
+		return nil, err
+	}
+	return &ARCAuthenticationResults{InstanceNumber: instance, raw: raw}, nil
+}
+
+// Ignore a later header only when its instance is unambiguous and in range.
+// Other malformed tags in later sets do not affect this seal's signed input;
+// missing, invalid or duplicate i= tags still go through the normal parser.
+func isLaterARCHeader(raw string, maxInstance int) bool {
+	name, value := header.ParseHeaderField(raw)
+	if !header.EqualASCIIFold(name, "ARC-Seal") && !header.EqualASCIIFold(name, "ARC-Message-Signature") && !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
+		return false
+	}
+	if header.EqualASCIIFold(name, "ARC-Authentication-Results") {
+		instance, _, err := authres.ParseARCInstance(value)
+		return err == nil && instance > maxInstance
+	}
+	instance, found := 0, false
+	for _, field := range strings.Split(value, ";") {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || strings.Trim(key, " \t\r\n") != "i" {
+			continue
+		}
+		if found {
+			return false
+		}
+		found = true
+		n, err := authres.ParseARCPosition(strings.Trim(value, " \t\r\n"))
+		if err != nil {
+			return false
+		}
+		instance = n
+	}
+	return found && instance > maxInstance && instance <= 50
 }

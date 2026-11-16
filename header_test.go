@@ -3,8 +3,11 @@ package mmauth
 import (
 	"bufio"
 	"crypto"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func Test_readHeader(t *testing.T) {
@@ -14,6 +17,10 @@ func Test_readHeader(t *testing.T) {
 		expect        headers
 		expectedError bool
 	}{
+		{
+			name:          "empty input",
+			expectedError: true,
+		},
 		{
 			name:   "empty",
 			input:  "\r\n\r\n",
@@ -43,6 +50,92 @@ func Test_readHeader(t *testing.T) {
 			expect: headers{
 				"header:hoge\r\n",
 			},
+		},
+		{
+			name:   "header only",
+			input:  "From: a@example.com\r\n",
+			expect: headers{"From: a@example.com\r\n"},
+		},
+		{
+			name:  "header only with folding",
+			input: "From: a@example.com\r\nSubject: hello\r\n\tworld\r\n",
+			expect: headers{
+				"From: a@example.com\r\n",
+				"Subject: hello\r\n\tworld\r\n",
+			},
+		},
+		{
+			name:  "header only LF",
+			input: "From: a@example.com\nSubject: hello\n",
+			expect: headers{
+				"From: a@example.com\r\n",
+				"Subject: hello\r\n",
+			},
+		},
+		{
+			name:   "header only field name boundaries",
+			input:  "!: first\r\n~: last\r\n",
+			expect: headers{"!: first\r\n", "~: last\r\n"},
+		},
+		{
+			name:   "header only obsolete whitespace before colon",
+			input:  "From \t: a@example.com\r\n",
+			expect: headers{"From \t: a@example.com\r\n"},
+		},
+		{
+			name:          "header only missing colon",
+			input:         "not-a-header\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only malformed last line",
+			input:         "From: a@example.com\r\nnot-a-header\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only colon in continuation",
+			input:         "not-a-header\r\n\tcontinued: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only empty field name",
+			input:         ": value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only whitespace in field name",
+			input:         "Bad Name: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only control in field name",
+			input:         "Bad\x00Name: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only DEL in field name",
+			input:         "Bad\x7fName: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only non-ASCII field name",
+			input:         "X-é: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "header only orphan continuation",
+			input:         "\torphan: value\r\n",
+			expectedError: true,
+		},
+		{
+			name:          "unterminated last header",
+			input:         "From: a@example.com\r\nSubject: hello",
+			expectedError: true,
+		},
+		{
+			name:          "unterminated continuation",
+			input:         "Subject: hello\r\n\tworld",
+			expectedError: true,
 		},
 		{
 			name:          "non header crlf",
@@ -83,13 +176,78 @@ func Test_readHeader(t *testing.T) {
 	}
 }
 
-func TestMMAuthCloseReturnsParseError(t *testing.T) {
-	m := NewMMAuth()
-	if _, err := m.Write([]byte("header:value")); err != nil {
-		t.Fatalf("unexpected write error: %v", err)
+func TestReadHeaderReadError(t *testing.T) {
+	sentinel := errors.New("header read failed")
+	r := io.MultiReader(strings.NewReader("From: a@example.com\r\n"), iotest.ErrReader(sentinel))
+	if _, err := readHeader(bufio.NewReader(r)); err == nil || !strings.Contains(err.Error(), sentinel.Error()) {
+		t.Fatalf("expected read error, got %v", err)
 	}
-	if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
-		t.Fatalf("expected parse error from Close, got %v", err)
+}
+
+func TestReadHeaderFieldNameValidationAtBothEndings(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+	}{
+		{"missing colon", "NoColon\r\n"},
+		{"empty name", ": value\r\n"},
+		{"space in name", "Bad Name: value\r\n"},
+		{"control in name", "Bad\x00Name: value\r\n"},
+		{"non ASCII name", "X-é: value\r\n"},
+		{"orphan continuation", "\torphan: value\r\n"},
+	} {
+		for _, ending := range []struct {
+			name string
+			text string
+		}{
+			{"EOF", ""},
+			{"separator", "\r\nbody\r\n"},
+		} {
+			t.Run(tc.name+"/"+ending.name, func(t *testing.T) {
+				prefix := "Date: Mon, 12 Oct 2026 00:00:00 +0000\r\n"
+				if tc.name == "orphan continuation" {
+					prefix = ""
+				}
+				input := prefix + tc.field + ending.text
+				_, err := readHeader(bufio.NewReader(strings.NewReader(input)))
+				if err == nil || !strings.Contains(err.Error(), "invalid header field") {
+					t.Fatalf("malformed field accepted: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestReadHeaderLongValidLines(t *testing.T) {
+	for _, length := range []int{78, 998} {
+		field := "X: " + strings.Repeat("a", length-3) + "\r\n"
+		for _, ending := range []string{"", "\r\nbody\r\n"} {
+			reader := bufio.NewReader(strings.NewReader(field + ending))
+			got, err := readHeader(reader)
+			if err != nil || len(got) != 1 || got[0] != field {
+				t.Fatalf("length=%d ending=%q: fields=%q err=%v", length, ending, got, err)
+			}
+			if ending != "" {
+				body, err := io.ReadAll(reader)
+				if err != nil || string(body) != "body\r\n" {
+					t.Fatalf("body changed: %q, %v", body, err)
+				}
+			}
+		}
+	}
+}
+
+func TestMMAuthCloseReturnsParseError(t *testing.T) {
+	for _, input := range []string{"header:value", "not-a-header\r\n", "From: a@example.com\r\nnot-a-header\r\n", "From: a@example.com\r\nBad Name: value\r\n\r\nbody\r\n"} {
+		t.Run(input, func(t *testing.T) {
+			m := NewMMAuth()
+			if _, err := m.Write([]byte(input)); err != nil {
+				t.Fatalf("unexpected write error: %v", err)
+			}
+			if err := m.Close(); err == nil || !strings.Contains(err.Error(), "failed to read header") {
+				t.Fatalf("expected parse error from Close, got %v", err)
+			}
+		})
 	}
 }
 

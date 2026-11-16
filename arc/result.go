@@ -2,9 +2,9 @@ package arc
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/masa23/mmauth/internal/authres"
 	"github.com/masa23/mmauth/internal/header"
 )
 
@@ -24,54 +24,43 @@ func (aar *ARCAuthenticationResults) Raw() string {
 	return aar.raw
 }
 
-// ARC-Authentication-Results の文字列化
-// ヘッダ名は含まない
-func (aar ARCAuthenticationResults) String() string {
-	header := fmt.Sprintf("i=%d; %s;", aar.InstanceNumber, aar.AuthServId)
-	for _, result := range aar.Results {
-		header += fmt.Sprintf("\r\n        %s;", result)
+// Format validates and returns the AAR field value without its header name.
+func (aar ARCAuthenticationResults) Format() (string, error) {
+	results := aar.Results
+	if len(results) == 0 {
+		results = []string{"none"}
 	}
-	return header
+	value := fmt.Sprintf("i=%d; %s; %s", aar.InstanceNumber, aar.AuthServId, strings.Join(results, ";\r\n        "))
+	if _, err := ParseARCAuthenticationResults("ARC-Authentication-Results: " + value + "\r\n"); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
-// ARC-Authentication-Results のパース
-func ParseARCAuthenticationResults(s string) (*ARCAuthenticationResults, error) {
-	result := &ARCAuthenticationResults{}
-	result.raw = s
+// String returns the AAR field value, or an empty string for invalid values.
+func (aar ARCAuthenticationResults) String() string {
+	value, _ := aar.Format()
+	return value
+}
 
-	// ヘッダと値に分割
-	k, v := header.ParseHeaderField(s)
-	if !strings.EqualFold(k, "arc-authentication-results") {
+// ParseARCAuthenticationResults extracts the instance and the RFC 8601
+// assessment entries, preserving signed raw bytes for seal validation.
+func ParseARCAuthenticationResults(s string) (*ARCAuthenticationResults, error) {
+	name, value, ok := strings.Cut(s, ":")
+	if !ok || !header.EqualASCIIFold(name, "ARC-Authentication-Results") {
 		return nil, fmt.Errorf("invalid header field")
 	}
-	fields := strings.Split(v, ";")
-
-	for i, field := range fields {
-		keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
-
-		if i == 1 { // authserv-id は通常インスタンス番号の直後に位置します
-			result.AuthServId = strings.TrimSpace(keyValue[0])
-			continue
-		}
-
-		if len(keyValue) != 2 {
-			continue
-		}
-
-		key := strings.ToLower(strings.TrimSpace(keyValue[0]))
-		value := strings.TrimSpace(keyValue[1])
-
-		switch key {
-		case "i":
-			instanceNumber, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, fmt.Errorf("invalid instance number")
-			}
-			result.InstanceNumber = instanceNumber
-		default:
-			result.Results = append(result.Results, fmt.Sprintf("%s=%s", key, value))
-		}
+	value = strings.TrimSuffix(value, "\r\n")
+	if err := authres.ValidateFieldValue(value); err != nil {
+		return nil, err
 	}
-
-	return result, nil
+	instance, payload, err := authres.ParseARCInstance(value)
+	if err != nil {
+		return nil, err
+	}
+	id, results, err := authres.ParsePayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	return &ARCAuthenticationResults{InstanceNumber: instance, AuthServId: id, Results: results, raw: s}, nil
 }

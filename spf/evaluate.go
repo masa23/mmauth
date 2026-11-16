@@ -71,9 +71,7 @@ func (r *Record) handleExpModifier(result *Result, ip net.IP, domain, sender, he
 		return nil, &Result{Status: PermError, Reason: "exp= domain-spec is empty"}
 	}
 
-	if res := incrementDNSMechanismCounter(resv); res != nil {
-		return nil, res
-	}
+	// Explanation lookups do not consume the ten DNS terms (RFC 7208 §4.6.4).
 
 	ctx := MacroContext{
 		IP:          ip,

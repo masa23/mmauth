@@ -3,6 +3,7 @@ package dmarc
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"reflect"
 	"testing"
@@ -93,6 +94,7 @@ func TestParseRecord(t *testing.T) {
 		{
 			raw: "v=DMARC1; p=none; rua=mailto:agg@example.com; ruf=mailto:for@example.com; fo=1:d:s; adkim=s; aspf=r; pct=50; ri=3600; sp=quarantine;",
 			expected: &Record{
+				ReportFormat:       []ReportFormat{ReportFormatAFRF},
 				Version:            "DMARC1",
 				Policy:             PolicyNone,
 				SubdomainPolicy:    PolicyQuarantine,
@@ -109,16 +111,24 @@ func TestParseRecord(t *testing.T) {
 		{
 			raw: "v=DMARC1; p=reject; adkim=r; aspf=s;",
 			expected: &Record{
-				Version:       "DMARC1",
-				Policy:        PolicyReject,
-				AlignmentDKIM: AlignmentRelaxed,
-				AlignmentSPF:  AlignmentStrict,
-				raw:           "v=DMARC1; p=reject; adkim=r; aspf=s;",
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				Percent:        100,
+				Version:        "DMARC1",
+				Policy:         PolicyReject,
+				AlignmentDKIM:  AlignmentRelaxed,
+				AlignmentSPF:   AlignmentStrict,
+				raw:            "v=DMARC1; p=reject; adkim=r; aspf=s;",
 			},
 		},
 		{
 			raw: "v=DMARC1; p=quarantine; pct=100; ri=86400;",
 			expected: &Record{
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
 				Version:        "DMARC1",
 				Policy:         PolicyQuarantine,
 				Percent:        100,
@@ -149,6 +159,12 @@ func TestLookupRecord(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
+				ReportFormat:       []ReportFormat{ReportFormatAFRF},
+				FailureOptions:     []FailureOption{FailureAllFail},
+				ReportInterval:     86400,
+				AlignmentSPF:       AlignmentRelaxed,
+				AlignmentDKIM:      AlignmentRelaxed,
+				Percent:            100,
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []ReportURI{{URI: "mailto:abuse@example.jp", MaxSize: 0}},
@@ -174,9 +190,15 @@ func TestLookupRecord(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
-				Version: "DMARC1",
-				Policy:  "reject",
-				raw:     "v=DMARC1; p=reject;",
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
+				Percent:        100,
+				Version:        "DMARC1",
+				Policy:         "reject",
+				raw:            "v=DMARC1; p=reject;",
 			},
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.example.jp" {
@@ -223,6 +245,12 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
+				ReportFormat:       []ReportFormat{ReportFormatAFRF},
+				FailureOptions:     []FailureOption{FailureAllFail},
+				ReportInterval:     86400,
+				AlignmentSPF:       AlignmentRelaxed,
+				AlignmentDKIM:      AlignmentRelaxed,
+				Percent:            100,
 				Version:            "DMARC1",
 				Policy:             "reject",
 				AggregateReportURI: []ReportURI{{URI: "mailto:abuse@example.jp", MaxSize: 0}},
@@ -240,8 +268,14 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "example.jp",
 			want: &Record{
-				Version: "DMARC1",
-				Policy:  "reject",
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
+				Percent:        100,
+				Version:        "DMARC1",
+				Policy:         "reject",
 				AggregateReportURI: []ReportURI{
 					{URI: "mailto:rua1@example.jp", MaxSize: 0},
 					{URI: "mailto:rua2@example.jp", MaxSize: 0},
@@ -263,10 +297,16 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "sub.example.jp",
 			want: &Record{
+				ReportFormat:      []ReportFormat{ReportFormatAFRF},
+				FailureOptions:    []FailureOption{FailureAllFail},
+				ReportInterval:    86400,
+				AlignmentSPF:      AlignmentRelaxed,
+				AlignmentDKIM:     AlignmentRelaxed,
+				Percent:           100,
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
-				isSubdomainPolicy: true,
+				IsSubdomainPolicy: true,
 				raw:               "v=DMARC1; p=reject; sp=reject;",
 			},
 			resolver: func(name string) ([]string, error) {
@@ -280,10 +320,16 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		{
 			domain: "sub.sub.example.jp",
 			want: &Record{
+				ReportFormat:      []ReportFormat{ReportFormatAFRF},
+				FailureOptions:    []FailureOption{FailureAllFail},
+				ReportInterval:    86400,
+				AlignmentSPF:      AlignmentRelaxed,
+				AlignmentDKIM:     AlignmentRelaxed,
+				Percent:           100,
 				Version:           "DMARC1",
 				Policy:            "reject",
 				SubdomainPolicy:   "reject",
-				isSubdomainPolicy: true,
+				IsSubdomainPolicy: true,
 				raw:               "v=DMARC1; p=reject; sp=reject;",
 			},
 			resolver: func(name string) ([]string, error) {
@@ -296,31 +342,34 @@ func TestLookupRecordWithSubdomainFallback(t *testing.T) {
 		},
 		{
 			domain: "sub.sub.example.jp",
-			want: &Record{
-				Version:           "DMARC1",
-				Policy:            "reject",
-				SubdomainPolicy:   "reject",
-				isSubdomainPolicy: true,
-				raw:               "v=DMARC1; p=reject; sp=reject;",
-			},
+			want:   nil,
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.sub.example.jp" {
 					return []string{"v=DMARC1; p=reject; sp=reject;"}, nil
 				}
 				return nil, &net.DNSError{IsNotFound: true}
 			},
-			wantErr: nil,
+			wantErr: ErrNoRecordFound,
 		},
 		{
 			domain: "sub.example.jp",
-			want:   nil,
+			want: &Record{
+				ReportFormat:   []ReportFormat{ReportFormatAFRF},
+				FailureOptions: []FailureOption{FailureAllFail},
+				ReportInterval: 86400,
+				AlignmentSPF:   AlignmentRelaxed,
+				AlignmentDKIM:  AlignmentRelaxed,
+				Percent:        100,
+				Version:        "DMARC1", Policy: PolicyReject, SubdomainPolicy: PolicyReject, IsSubdomainPolicy: true,
+				raw: "v=DMARC1; p=reject;",
+			},
 			resolver: func(name string) ([]string, error) {
 				if name == "_dmarc.example.jp" {
 					return []string{"v=DMARC1; p=reject;"}, nil
 				}
 				return nil, &net.DNSError{IsNotFound: true}
 			},
-			wantErr: ErrNoRecordFound,
+			wantErr: nil,
 		},
 		{
 			domain: "example.jp",
@@ -376,6 +425,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "mailto:reports@example.com",
 				MaxSize: 1024,
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -385,6 +435,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "mailto:reports@example.com",
 				MaxSize: 50 << 10, // 51200
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -394,6 +445,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "mailto:reports@example.com",
 				MaxSize: 50 << 20, // 52428800
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -403,6 +455,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "https://reports.example.com/dmarc",
 				MaxSize: 2 << 30, // 2147483648
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -412,6 +465,7 @@ func TestParseReportURI(t *testing.T) {
 			expected: &ReportURI{
 				URI:     "https://reports.example.com/dmarc",
 				MaxSize: 1 << 40, // 1099511627776
+				HasSize: true,
 			},
 			wantError: false,
 		},
@@ -446,9 +500,13 @@ func TestParseReportURI(t *testing.T) {
 			wantError: true,
 		},
 		{
-			name:      "Invalid size - overflow (too large for int64)",
-			uri:       "mailto:reports@example.com!8388608t", // 8,388,608 * 2^40 > MaxInt64 (max 8,388,607t; 8,388,608t already overflows)
-			wantError: true,
+			name: "Valid size above int64 range is saturated",
+			uri:  "mailto:reports@example.com!8388608t",
+			expected: &ReportURI{
+				URI:     "mailto:reports@example.com",
+				MaxSize: math.MaxInt64,
+				HasSize: true,
+			},
 		},
 	}
 
@@ -472,6 +530,9 @@ func TestParseReportURI(t *testing.T) {
 			}
 			if got.MaxSize != tc.expected.MaxSize {
 				t.Errorf("MaxSize mismatch: expected %d, got %d", tc.expected.MaxSize, got.MaxSize)
+			}
+			if got.HasSize != tc.expected.HasSize {
+				t.Errorf("HasSize mismatch: expected %v, got %v", tc.expected.HasSize, got.HasSize)
 			}
 		})
 	}

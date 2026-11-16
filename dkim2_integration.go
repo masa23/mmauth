@@ -1,9 +1,11 @@
 package mmauth
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
@@ -105,6 +107,26 @@ func (d *dkim2Integration) skipIfUnsigned(fields headers) {
 	d.skipped = true
 	d.overflow = false
 	d.raw = bytes.Buffer{}
+}
+
+// captureDKIM2Remainder preserves independent opt-in authentication when legacy
+// parsing stops. One octet beyond the capture budget marks overflow without
+// draining an unbounded body or registering legacy body hashes.
+func (m *MMAuth) captureDKIM2Remainder(input *bufio.Reader) {
+	d := m.dkim2
+	if d == nil || d.skipped || d.overflow {
+		return
+	}
+	remaining := d.maxBytes - int64(d.raw.Len())
+	// Buffered bytes already passed through the capture TeeReader. Consume
+	// those before allowing one new octet beyond the remaining raw budget.
+	buffered := int64(input.Buffered())
+	if remaining < 1<<63-1-buffered {
+		remaining += buffered + 1
+	} else {
+		remaining = 1<<63 - 1
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(input, remaining))
 }
 
 func (m *MMAuth) verifyDKIM2() {

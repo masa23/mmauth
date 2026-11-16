@@ -246,10 +246,8 @@ func TestDKIM2StillVerifiesWhenUnsignedDKIMHeaderIsMalformed(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyCloseErr := legacy.Close()
-	if legacyCloseErr == nil {
-		t.Fatal("legacy malformed DKIM header was accepted")
-	}
 	legacy.Verify()
+	legacyResults := legacy.GetAuthenticationHeader(nil, "", "")
 	if got := legacy.GetDKIM2Verification(); got.Enabled || got.Checked || got.Err != nil {
 		t.Fatalf("legacy DKIM2 state=%+v", got)
 	}
@@ -260,8 +258,9 @@ func TestDKIM2StillVerifiesWhenUnsignedDKIMHeaderIsMalformed(t *testing.T) {
 	if _, err := m.Write(wire); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Close(); err == nil || err.Error() != legacyCloseErr.Error() {
-		t.Fatalf("malformed DKIM Close error changed: enabled=%v legacy=%v", err, legacyCloseErr)
+	closeErr := m.Close()
+	if (closeErr == nil) != (legacyCloseErr == nil) || closeErr != nil && closeErr.Error() != legacyCloseErr.Error() {
+		t.Fatalf("malformed DKIM Close error changed: enabled=%v legacy=%v", closeErr, legacyCloseErr)
 	}
 	m.Verify()
 	state := m.GetDKIM2Verification()
@@ -269,8 +268,71 @@ func TestDKIM2StillVerifiesWhenUnsignedDKIMHeaderIsMalformed(t *testing.T) {
 		t.Fatalf("DKIM2 state=%+v", state)
 	}
 	results := m.GetAuthenticationHeader(nil, "", "")
-	if len(results) != 1 || results[0] != "dkim2=pass" {
+	if len(results) != len(legacyResults)+1 || !reflect.DeepEqual(results[:len(legacyResults)], legacyResults) || results[len(results)-1] != "dkim2=pass" {
 		t.Fatalf("Authentication-Results=%v", results)
+	}
+}
+
+// TestDKIM2StillVerifiesWhenDKIMLimitExceeded keeps main's legacy limit and
+// avoids body-hash work while retaining the opt-in DKIM2 message independently.
+func TestDKIM2StillVerifiesWhenDKIMLimitExceeded(t *testing.T) {
+	_, envelope, resolver, when := dkim2TestMessage(t)
+	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{7}, ed25519.SeedSize))
+	original := []byte("From: Alice <alice@example.com>\r\n\r\n" + strings.Repeat("body\r\n", 4096))
+	wire, err := dkim2.Sign(original, dkim2.SignOptions{Domain: "example.com", Selector: "s1", Key: key, Envelope: envelope, Timestamp: when})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire = append([]byte(strings.Repeat("DKIM-Signature: invalid\r\n", maxDKIMSignaturesPerMessage+1)), wire...)
+	verification := dkim2.VerifyOptions{Resolver: resolver, Now: when}
+	if direct := dkim2.Verify(wire, envelope, verification); direct.Status != dkim2.Pass {
+		t.Fatalf("direct DKIM2 verification: %+v", direct)
+	}
+	legacy := NewMMAuth()
+	_, _ = legacy.Write(wire)
+	legacyErr := legacy.Close()
+	if legacyErr == nil || !strings.Contains(legacyErr.Error(), "too many DKIM signatures") {
+		t.Fatalf("legacy signature limit changed: %v", legacyErr)
+	}
+	legacy.Verify()
+	legacyResults := legacy.GetAuthenticationHeader(nil, "", "")
+	m, err := NewMMAuthWithOptions(MMAuthOptions{EnableDKIM2: true, DKIM2Envelope: envelope, DKIM2VerifyOptions: verification})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := m.Write(wire)
+	closeErr := m.Close()
+	if writeErr != nil || closeErr == nil || closeErr.Error() != legacyErr.Error() {
+		t.Fatalf("DKIM2 capture or legacy signature limit failed: write=%v close=%v", writeErr, closeErr)
+	}
+	if len(m.bodyHashList) != 0 || len(m.bodyHashed) != 0 {
+		t.Fatal("legacy body hashes registered despite the signature limit")
+	}
+	m.Verify()
+	state := m.GetDKIM2Verification()
+	if !state.Checked || state.Result.Status != dkim2.Pass || state.Err != nil {
+		t.Fatalf("legacy signature count suppressed DKIM2: %+v", state)
+	}
+	results := m.GetAuthenticationHeader(nil, "", "")
+	if len(results) != len(legacyResults)+1 || !reflect.DeepEqual(results[:len(legacyResults)], legacyResults) || results[len(results)-1] != "dkim2=pass" {
+		t.Fatalf("legacy results changed: %v", results)
+	}
+	limited, err := NewMMAuthWithOptions(MMAuthOptions{EnableDKIM2: true, DKIM2Envelope: envelope, DKIM2VerifyOptions: verification, DKIM2MaxMessageBytes: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = limited.Write(wire)
+	if err := limited.Close(); err == nil || err.Error() != legacyErr.Error() {
+		t.Fatalf("capture overflow replaced legacy signature-limit error: %v", err)
+	}
+	resolver.lookups = 0
+	limited.Verify()
+	state = limited.GetDKIM2Verification()
+	if state.Checked || !errors.Is(state.Err, ErrDKIM2MessageTooLarge) || limited.dkim2.raw.Len() != 0 || resolver.lookups != 0 {
+		t.Fatalf("signature-limit remainder bypassed capture budget: %+v lookups=%d", state, resolver.lookups)
+	}
+	if len(limited.bodyHashList) != 0 || len(limited.bodyHashed) != 0 {
+		t.Fatal("capture overflow registered legacy body hashes")
 	}
 }
 

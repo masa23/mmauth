@@ -45,7 +45,7 @@ outcome := m.GetDKIM2Verification()
 
 DKIM2は受信メールの生データ全体を使います。有効時のみ、DKIM2フィールドがあるメールを最大32 MiBまでメモリに保持します。`DKIM2MaxMessageBytes`で上限を変更できます。上限を超えても従来のDKIM・ARC検証は継続します。`GetAuthenticationHeader`には、DKIM2を実際に検証した場合のみ`dkim2=...`が追加されます。送信時のDKIM2署名は`dkim2`パッケージの`Sign`、`ForwardChecked`、`ReviseChecked`を明示的に使用してください。
 
-DKIM2検証では、メール1通につきDNS照会32回、DNS処理15秒を既定の上限とします。`dkim2.VerifyOptions.MaxDNSLookups`と`DNSBudget`で調整できます。受信した署名を検証せずに追加署名する取り決めがある場合に限り、`Forward`・`Revise`で`SignOptions.OutOfBandArrangement = true`を指定します。通常の転送には`ForwardChecked`・`ReviseChecked`を使用します。不正なDKIM・ARCヘッダーに対する従来の`Close`エラーは維持されますが、メール全体を保持できた場合は、その後`Verify`を呼ぶことでDKIM2の結果を独立して取得できます。
+DKIM2検証では、メール1通につきDNS照会32回、DNS処理15秒を既定の上限とします。`dkim2.VerifyOptions.MaxDNSLookups`と`DNSBudget`で調整できます。受信した署名を検証せずに追加署名する取り決めがある場合に限り、`Forward`・`Revise`で`SignOptions.OutOfBandArrangement = true`を指定します。通常の転送には`ForwardChecked`・`ReviseChecked`を使用します。不正なDKIM・ARCヘッダーの扱いや署名数上限は既存の処理を維持します。既存処理で`Close`がエラーとなる場合も、メール全体を保持できた場合は、その後`Verify`を呼ぶことでDKIM2の結果を独立して取得できます。
 
 `dkim2`単体にも、メッセージ32 MiB、ヘッダー合計1 MiB、1フィールド64 KiB、4096フィールドの上限があります。保持上限を引き上げても、この解析上限は変わりません。RSA鍵は1024〜8192bit、指数65537に制限します。国際化ドメインは有効なIDNAのA-label・U-labelを使用し、互換文字による表記、不正UTF-8、ASCIIだけに復号されるPunycodeラベルは拒否します。小文字化するのは全体がASCIIのラベルだけです。U-labelには大小文字変換を加えず、有効なNFC文字列を要求します。例えば`BÜCHER.example`ではなく、`bücher.example`または対応するA-labelを使用してください。
 
